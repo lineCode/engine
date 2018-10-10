@@ -9,18 +9,17 @@
 #include "flutter/assets/asset_manager.h"
 #include "flutter/assets/directory_asset_bundle.h"
 #include "flutter/fml/file.h"
+#include "flutter/fml/make_copyable.h"
 #include "flutter/fml/message_loop.h"
 #include "flutter/fml/paths.h"
+#include "flutter/fml/synchronization/waitable_event.h"
 #include "flutter/fml/task_runner.h"
 #include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/common/rasterizer.h"
 #include "flutter/shell/common/shell.h"
 #include "flutter/shell/common/switches.h"
 #include "flutter/shell/common/thread_host.h"
-#include "lib/fxl/files/path.h"
-#include "lib/fxl/functional/make_copyable.h"
-#include "lib/fxl/synchronization/waitable_event.h"
-#include "third_party/dart/runtime/bin/embedded_dart_io.h"
+#include "third_party/dart/runtime/include/bin/dart_io_api.h"
 
 #ifdef ERROR
 #undef ERROR
@@ -33,7 +32,7 @@ namespace shell {
 class ScriptCompletionTaskObserver {
  public:
   ScriptCompletionTaskObserver(Shell& shell,
-                               fxl::RefPtr<fxl::TaskRunner> main_task_runner,
+                               fml::RefPtr<fml::TaskRunner> main_task_runner,
                                bool run_forever)
       : engine_(shell.GetEngine()),
         main_task_runner_(std::move(main_task_runner)),
@@ -82,26 +81,13 @@ class ScriptCompletionTaskObserver {
 
  private:
   fml::WeakPtr<Engine> engine_;
-  fxl::RefPtr<fxl::TaskRunner> main_task_runner_;
+  fml::RefPtr<fml::TaskRunner> main_task_runner_;
   bool run_forever_ = false;
   tonic::DartErrorHandleType last_error_ = tonic::kUnknownErrorType;
   bool has_terminated = false;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(ScriptCompletionTaskObserver);
+  FML_DISALLOW_COPY_AND_ASSIGN(ScriptCompletionTaskObserver);
 };
-
-static bool FileNameIsDill(const std::string& name) {
-  const std::string suffix = ".dill";
-
-  if (name.size() < suffix.size()) {
-    return false;
-  }
-
-  if (name.rfind(suffix, name.size()) == name.size() - suffix.size()) {
-    return true;
-  }
-  return false;
-}
 
 int RunTester(const blink::Settings& settings, bool run_forever) {
   const auto thread_label = "io.flutter.test";
@@ -134,25 +120,28 @@ int RunTester(const blink::Settings& settings, bool run_forever) {
   );
 
   if (!shell || !shell->IsSetup()) {
-    FXL_LOG(ERROR) << "Could not setup the shell.";
+    FML_LOG(ERROR) << "Could not setup the shell.";
     return EXIT_FAILURE;
   }
 
   if (settings.main_dart_file_path.empty()) {
-    FXL_LOG(ERROR) << "Main dart file not specified.";
+    FML_LOG(ERROR) << "Main dart file not specified.";
     return EXIT_FAILURE;
   }
 
+  std::initializer_list<fml::FileMapping::Protection> protection = {
+      fml::FileMapping::Protection::kRead};
+  auto main_dart_file_mapping = std::make_unique<fml::FileMapping>(
+      fml::OpenFile(
+          fml::paths::AbsolutePath(settings.main_dart_file_path).c_str(), false,
+          fml::FilePermission::kRead),
+      protection);
+
   auto isolate_configuration =
-      FileNameIsDill(settings.main_dart_file_path)
-          ? IsolateConfiguration::CreateForSnapshot(
-                std::make_unique<fml::FileMapping>(
-                    files::AbsolutePath(settings.main_dart_file_path), false))
-          : IsolateConfiguration::CreateForSource(settings.main_dart_file_path,
-                                                  settings.packages_file_path);
+      IsolateConfiguration::CreateForKernel(std::move(main_dart_file_mapping));
 
   if (!isolate_configuration) {
-    FXL_LOG(ERROR) << "Could create isolate configuration.";
+    FML_LOG(ERROR) << "Could create isolate configuration.";
     return EXIT_FAILURE;
   }
 
@@ -160,8 +149,8 @@ int RunTester(const blink::Settings& settings, bool run_forever) {
   asset_manager->PushBack(std::make_unique<blink::DirectoryAssetBundle>(
       fml::Duplicate(settings.assets_dir)));
   asset_manager->PushBack(
-      std::make_unique<blink::DirectoryAssetBundle>(fml::OpenFile(
-          settings.assets_path.c_str(), fml::OpenPermission::kRead, true)));
+      std::make_unique<blink::DirectoryAssetBundle>(fml::OpenDirectory(
+          settings.assets_path.c_str(), false, fml::FilePermission::kRead)));
 
   RunConfiguration run_configuration(std::move(isolate_configuration),
                                      std::move(asset_manager));
@@ -177,17 +166,18 @@ int RunTester(const blink::Settings& settings, bool run_forever) {
 
   bool engine_did_run = false;
 
-  fxl::AutoResetWaitableEvent sync_run_latch;
+  fml::AutoResetWaitableEvent sync_run_latch;
   fml::TaskRunner::RunNowOrPostTask(
       shell->GetTaskRunners().GetUITaskRunner(),
-      fxl::MakeCopyable([&sync_run_latch, &completion_observer,
+      fml::MakeCopyable([&sync_run_latch, &completion_observer,
                          engine = shell->GetEngine(),
                          config = std::move(run_configuration),
                          &engine_did_run]() mutable {
         fml::MessageLoop::GetCurrent().AddTaskObserver(
             reinterpret_cast<intptr_t>(&completion_observer),
             [&completion_observer]() { completion_observer.DidProcessTask(); });
-        if (engine->Run(std::move(config))) {
+        if (engine->Run(std::move(config)) !=
+            shell::Engine::RunStatus::Failure) {
           engine_did_run = true;
 
           blink::ViewportMetrics metrics;
@@ -197,7 +187,7 @@ int RunTester(const blink::Settings& settings, bool run_forever) {
           engine->SetViewportMetrics(metrics);
 
         } else {
-          FXL_DLOG(ERROR) << "Could not launch the engine with configuration.";
+          FML_DLOG(ERROR) << "Could not launch the engine with configuration.";
         }
         sync_run_latch.Signal();
       }));
@@ -208,7 +198,7 @@ int RunTester(const blink::Settings& settings, bool run_forever) {
 
   // Cleanup the completion observer synchronously as it is living on the
   // stack.
-  fxl::AutoResetWaitableEvent latch;
+  fml::AutoResetWaitableEvent latch;
   fml::TaskRunner::RunNowOrPostTask(
       shell->GetTaskRunners().GetUITaskRunner(),
       [&latch, &completion_observer] {
@@ -233,7 +223,7 @@ int main(int argc, char* argv[]) {
   dart::bin::SetExecutableName(argv[0]);
   dart::bin::SetExecutableArguments(argc - 1, argv);
 
-  auto command_line = fxl::CommandLineFromArgcArgv(argc, argv);
+  auto command_line = fml::CommandLineFromArgcArgv(argc, argv);
 
   if (command_line.HasOption(shell::FlagForSwitch(shell::Switch::Help))) {
     shell::PrintUsage("flutter_tester");
@@ -248,19 +238,16 @@ int main(int argc, char* argv[]) {
   }
 
   if (settings.main_dart_file_path.size() == 0) {
-    FXL_LOG(ERROR) << "Main dart file path not specified.";
+    FML_LOG(ERROR) << "Main dart file path not specified.";
     return EXIT_FAILURE;
   }
 
   settings.icu_data_path = "icudtl.dat";
 
-  settings.platform_kernel_path =
-      fml::paths::JoinPaths({settings.assets_path, "platform.dill"});
-
   // The tools that read logs get confused if there is a log tag specified.
   settings.log_tag = "";
 
-  settings.task_observer_add = [](intptr_t key, fxl::Closure callback) {
+  settings.task_observer_add = [](intptr_t key, fml::closure callback) {
     fml::MessageLoop::GetCurrent().AddTaskObserver(key, std::move(callback));
   };
 

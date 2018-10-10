@@ -6,19 +6,20 @@
 
 #include "flutter/common/settings.h"
 #include "flutter/common/task_runners.h"
+#include "flutter/fml/task_runner.h"
 #include "flutter/lib/ui/text/font_collection.h"
 #include "flutter/lib/ui/ui_dart_state.h"
+#include "flutter/lib/ui/window/window.h"
 #include "flutter/third_party/txt/src/txt/font_style.h"
 #include "flutter/third_party/txt/src/txt/font_weight.h"
 #include "flutter/third_party/txt/src/txt/paragraph_style.h"
 #include "flutter/third_party/txt/src/txt/text_decoration.h"
 #include "flutter/third_party/txt/src/txt/text_style.h"
-#include "lib/fxl/tasks/task_runner.h"
-#include "lib/tonic/converter/dart_converter.h"
-#include "lib/tonic/dart_args.h"
-#include "lib/tonic/dart_binding_macros.h"
-#include "lib/tonic/dart_library_natives.h"
 #include "third_party/icu/source/common/unicode/ustring.h"
+#include "third_party/tonic/converter/dart_converter.h"
+#include "third_party/tonic/dart_args.h"
+#include "third_party/tonic/dart_binding_macros.h"
+#include "third_party/tonic/dart_library_natives.h"
 
 namespace blink {
 namespace {
@@ -103,15 +104,15 @@ void ParagraphBuilder::RegisterNatives(tonic::DartLibraryNatives* natives) {
        FOR_EACH_BINDING(DART_REGISTER_NATIVE)});
 }
 
-fxl::RefPtr<ParagraphBuilder> ParagraphBuilder::create(
+fml::RefPtr<ParagraphBuilder> ParagraphBuilder::create(
     tonic::Int32List& encoded,
     const std::string& fontFamily,
     double fontSize,
     double lineHeight,
     const std::u16string& ellipsis,
     const std::string& locale) {
-  return fxl::MakeRefCounted<ParagraphBuilder>(
-      encoded, fontFamily, fontSize, lineHeight, ellipsis, locale);
+  return fml::MakeRefCounted<ParagraphBuilder>(encoded, fontFamily, fontSize,
+                                               lineHeight, ellipsis, locale);
 }
 
 ParagraphBuilder::ParagraphBuilder(tonic::Int32List& encoded,
@@ -155,8 +156,10 @@ ParagraphBuilder::ParagraphBuilder(tonic::Int32List& encoded,
     style.locale = locale;
   }
 
+  FontCollection& font_collection =
+      UIDartState::Current()->window()->client()->GetFontCollection();
   m_paragraphBuilder = std::make_unique<txt::ParagraphBuilder>(
-      style, blink::FontCollection::ForProcess().GetFontCollection());
+      style, font_collection.GetFontCollection());
 }  // namespace blink
 
 ParagraphBuilder::~ParagraphBuilder() = default;
@@ -172,7 +175,7 @@ void ParagraphBuilder::pushStyle(tonic::Int32List& encoded,
                                  Dart_Handle background_data,
                                  Dart_Handle foreground_objects,
                                  Dart_Handle foreground_data) {
-  FXL_DCHECK(encoded.num_elements() == 8);
+  FML_DCHECK(encoded.num_elements() == 8);
 
   int32_t mask = encoded[0];
 
@@ -207,8 +210,7 @@ void ParagraphBuilder::pushStyle(tonic::Int32List& encoded,
           static_cast<txt::FontWeight>(encoded[tsFontWeightIndex]);
 
     if (mask & tsFontStyleMask)
-      style.font_style =
-          static_cast<txt::FontStyle>(encoded[tsFontStyleIndex]);
+      style.font_style = static_cast<txt::FontStyle>(encoded[tsFontStyleIndex]);
 
     if (mask & tsFontFamilyMask)
       style.font_family = fontFamily;
@@ -272,7 +274,7 @@ Dart_Handle ParagraphBuilder::addText(const std::u16string& text) {
   return Dart_Null();
 }
 
-fxl::RefPtr<Paragraph> ParagraphBuilder::build() {
+fml::RefPtr<Paragraph> ParagraphBuilder::build() {
   return Paragraph::Create(m_paragraphBuilder->Build());
 }
 

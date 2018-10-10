@@ -5,10 +5,12 @@
 package io.flutter.util;
 
 import android.content.Context;
-import java.io.IOException;
-import java.lang.String;
 
 public final class PathUtils {
+    public static String getFilesDir(Context applicationContext) {
+        return applicationContext.getFilesDir().getPath();
+    }
+
     public static String getDataDirectory(Context applicationContext) {
         return applicationContext.getDir("flutter", Context.MODE_PRIVATE).getPath();
     }

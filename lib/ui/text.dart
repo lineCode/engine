@@ -359,7 +359,7 @@ class TextStyle {
     Locale locale,
     Paint background,
     Paint foreground,
-  }) : assert(color == null || foreground == null, 
+  }) : assert(color == null || foreground == null,
          'Cannot provide both a color and a foreground\n'
          'The color argument is just a shorthand for "foreground: new Paint()..color = color".'
        ),
@@ -750,6 +750,7 @@ class TextBox {
     this.direction,
   );
 
+  @pragma('vm:entry-point')
   TextBox._(
     this.left,
     this.top,
@@ -948,6 +949,7 @@ class Paragraph extends NativeFieldWrapperClass2 {
   /// or extended directly.
   ///
   /// To create a [Paragraph] object, use a [ParagraphBuilder].
+  @pragma('vm:entry-point')
   Paragraph._();
 
   /// The amount of horizontal space this paragraph occupies.
@@ -1035,6 +1037,7 @@ class Paragraph extends NativeFieldWrapperClass2 {
 class ParagraphBuilder extends NativeFieldWrapperClass2 {
   /// Creates a [ParagraphBuilder] object, which is used to create a
   /// [Paragraph].
+  @pragma('vm:entry-point')
   ParagraphBuilder(ParagraphStyle style) { _constructor(style._encoded, style._fontFamily, style._fontSize, style._lineHeight, style._ellipsis, _encodeLocale(style._locale)); }
   void _constructor(Int32List encoded, String fontFamily, double fontSize, double lineHeight, String ellipsis, String locale) native 'ParagraphBuilder_constructor';
 

@@ -16,7 +16,8 @@
 
 #include "third_party/benchmark/include/benchmark/benchmark_api.h"
 
-#include "lib/fxl/logging.h"
+#include "flutter/fml/logging.h"
+#include "flutter/third_party/txt/tests/txt_test_utils.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "txt/font_collection.h"
@@ -24,7 +25,6 @@
 #include "txt/font_weight.h"
 #include "txt/paragraph.h"
 #include "txt/paragraph_builder.h"
-#include "utils.h"
 
 namespace txt {
 

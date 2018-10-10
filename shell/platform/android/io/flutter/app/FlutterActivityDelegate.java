@@ -24,23 +24,16 @@ import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
-import android.widget.FrameLayout;
-import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.PluginRegistry;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.flutter.plugin.platform.PlatformPlugin;
 import io.flutter.util.Preconditions;
 import io.flutter.view.FlutterMain;
 import io.flutter.view.FlutterNativeView;
+import io.flutter.view.FlutterRunArguments;
 import io.flutter.view.FlutterView;
-import io.flutter.view.TextureRegistry;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Class that performs the actual work of tying Android {@link Activity}
@@ -170,19 +163,16 @@ public final class FlutterActivityDelegate
             }
         }
 
-        // When an activity is created for the first time, we direct the
-        // FlutterView to re-use a pre-existing Isolate rather than create a new
-        // one. This is so that an Isolate coming in from the ViewFactory is
-        // used.
-        final boolean reuseIsolate = true;
-
-        if (loadIntent(activity.getIntent(), reuseIsolate)) {
+        if (loadIntent(activity.getIntent())) {
             return;
         }
         if (!flutterView.getFlutterNativeView().isApplicationRunning()) {
           String appBundlePath = FlutterMain.findAppBundlePath(activity.getApplicationContext());
           if (appBundlePath != null) {
-            flutterView.runFromBundle(appBundlePath, null, "main", reuseIsolate);
+            FlutterRunArguments arguments = new FlutterRunArguments();
+            arguments.bundlePath = appBundlePath;
+            arguments.entrypoint = "main";
+            flutterView.runFromBundle(arguments);
           }
         }
     }
@@ -206,7 +196,6 @@ public final class FlutterActivityDelegate
         if (app instanceof FlutterApplication) {
             FlutterApplication flutterApp = (FlutterApplication) app;
             if (activity.equals(flutterApp.getCurrentActivity())) {
-                Log.i(TAG, "onPause setting current activity to null");
                 flutterApp.setCurrentActivity(null);
             }
         }
@@ -227,10 +216,7 @@ public final class FlutterActivityDelegate
         Application app = (Application) activity.getApplicationContext();
         if (app instanceof FlutterApplication) {
             FlutterApplication flutterApp = (FlutterApplication) app;
-            Log.i(TAG, "onResume setting current activity to this");
             flutterApp.setCurrentActivity(activity);
-        } else {
-            Log.i(TAG, "onResume app wasn't a FlutterApplication!!");
         }
     }
 
@@ -252,7 +238,6 @@ public final class FlutterActivityDelegate
         if (app instanceof FlutterApplication) {
             FlutterApplication flutterApp = (FlutterApplication) app;
             if (activity.equals(flutterApp.getCurrentActivity())) {
-                Log.i(TAG, "onDestroy setting current activity to null");
                 flutterApp.setCurrentActivity(null);
             }
         }
@@ -338,11 +323,6 @@ public final class FlutterActivityDelegate
     }
 
     private boolean loadIntent(Intent intent) {
-        final boolean reuseIsolate = false;
-        return loadIntent(intent, reuseIsolate);
-    }
-
-    private boolean loadIntent(Intent intent, boolean reuseIsolate) {
         String action = intent.getAction();
         if (Intent.ACTION_RUN.equals(action)) {
             String route = intent.getStringExtra("route");
@@ -356,7 +336,10 @@ public final class FlutterActivityDelegate
                 flutterView.setInitialRoute(route);
             }
             if (!flutterView.getFlutterNativeView().isApplicationRunning()) {
-                flutterView.runFromBundle(appBundlePath, null, "main", reuseIsolate);
+              FlutterRunArguments args = new FlutterRunArguments();
+              args.bundlePath = appBundlePath;
+              args.entrypoint = "main";
+              flutterView.runFromBundle(args);
             }
             return true;
         }

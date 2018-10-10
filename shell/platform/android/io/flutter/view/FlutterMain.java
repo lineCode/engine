@@ -11,18 +11,11 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
-
 import io.flutter.util.PathUtils;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 /**
  * A class to intialize the Flutter engine.
@@ -38,7 +31,6 @@ public class FlutterMain {
     private static final String AOT_ISOLATE_SNAPSHOT_DATA_KEY = "isolate-snapshot-data";
     private static final String AOT_ISOLATE_SNAPSHOT_INSTR_KEY = "isolate-snapshot-instr";
     private static final String FLX_KEY = "flx";
-    private static final String SNAPSHOT_BLOB_KEY = "snapshot-blob";
     private static final String FLUTTER_ASSETS_DIR_KEY = "flutter-assets-dir";
 
     // XML Attribute keys supported in AndroidManifest.xml
@@ -54,8 +46,6 @@ public class FlutterMain {
         FlutterMain.class.getName() + '.' + AOT_ISOLATE_SNAPSHOT_INSTR_KEY;
     public static final String PUBLIC_FLX_KEY =
         FlutterMain.class.getName() + '.' + FLX_KEY;
-    public static final String PUBLIC_SNAPSHOT_BLOB_KEY =
-        FlutterMain.class.getName() + '.' + SNAPSHOT_BLOB_KEY;
     public static final String PUBLIC_FLUTTER_ASSETS_DIR_KEY =
         FlutterMain.class.getName() + '.' + FLUTTER_ASSETS_DIR_KEY;
 
@@ -66,21 +56,16 @@ public class FlutterMain {
     private static final String DEFAULT_AOT_ISOLATE_SNAPSHOT_DATA = "isolate_snapshot_data";
     private static final String DEFAULT_AOT_ISOLATE_SNAPSHOT_INSTR = "isolate_snapshot_instr";
     private static final String DEFAULT_FLX = "app.flx";
-    private static final String DEFAULT_SNAPSHOT_BLOB = "snapshot_blob.bin";
     private static final String DEFAULT_KERNEL_BLOB = "kernel_blob.bin";
-    private static final String DEFAULT_PLATFORM_DILL = "platform.dill";
     private static final String DEFAULT_FLUTTER_ASSETS_DIR = "flutter_assets";
 
-    private static final String MANIFEST = "flutter.yaml";
+    // Assets that are shared among all Flutter apps within an APK.
+    private static final String SHARED_ASSET_DIR = "flutter_shared";
+    private static final String SHARED_ASSET_ICU_DATA = "icudtl.dat";
 
     private static String fromFlutterAssets(String filePath) {
         return sFlutterAssetsDir + File.separator + filePath;
     }
-
-    private static final Set<String> SKY_RESOURCES = ImmutableSetBuilder.<String>newInstance()
-        .add("icudtl.dat")
-        .add(MANIFEST)
-        .build();
 
     // Mutable because default values can be overridden via config properties
     private static String sAotSharedLibraryPath = DEFAULT_AOT_SHARED_LIBRARY_PATH;
@@ -89,7 +74,6 @@ public class FlutterMain {
     private static String sAotIsolateSnapshotData = DEFAULT_AOT_ISOLATE_SNAPSHOT_DATA;
     private static String sAotIsolateSnapshotInstr = DEFAULT_AOT_ISOLATE_SNAPSHOT_INSTR;
     private static String sFlx = DEFAULT_FLX;
-    private static String sSnapshotBlob = DEFAULT_SNAPSHOT_BLOB;
     private static String sFlutterAssetsDir = DEFAULT_FLUTTER_ASSETS_DIR;
 
     private static boolean sInitialized = false;
@@ -97,6 +81,7 @@ public class FlutterMain {
     private static boolean sIsPrecompiledAsBlobs;
     private static boolean sIsPrecompiledAsSharedLibrary;
     private static Settings sSettings;
+    private static String sIcuDataPath;
 
     private static final class ImmutableSetBuilder<T> {
         static <T> ImmutableSetBuilder<T> newInstance() {
@@ -189,6 +174,9 @@ public class FlutterMain {
         if (Looper.myLooper() != Looper.getMainLooper()) {
           throw new IllegalStateException("ensureInitializationComplete must be called on the main thread");
         }
+        if (sSettings == null) {
+          throw new IllegalStateException("ensureInitializationComplete must be called after startInitialization");
+        }
         if (sInitialized) {
             return;
         }
@@ -196,8 +184,7 @@ public class FlutterMain {
             sResourceExtractor.waitForCompletion();
 
             List<String> shellArgs = new ArrayList<>();
-            shellArgs.add("--icu-data-file-path=" +
-                new File(PathUtils.getDataDirectory(applicationContext), "icudtl.dat"));
+            shellArgs.add("--icu-data-file-path=" + sIcuDataPath);
             if (args != null) {
                 Collections.addAll(shellArgs, args);
             }
@@ -226,8 +213,10 @@ public class FlutterMain {
             }
 
             String appBundlePath = findAppBundlePath(applicationContext);
+            String appStoragePath = PathUtils.getFilesDir(applicationContext);
+            String engineCachesPath = PathUtils.getCacheDirectory(applicationContext);
             nativeInit(applicationContext, shellArgs.toArray(new String[0]),
-                appBundlePath);
+                appBundlePath, appStoragePath, engineCachesPath);
 
             sInitialized = true;
         } catch (Exception e) {
@@ -236,7 +225,7 @@ public class FlutterMain {
         }
     }
 
-    private static native void nativeInit(Context context, String[] args, String bundlePath);
+    private static native void nativeInit(Context context, String[] args, String bundlePath, String appStoragePath, String engineCachesPath);
     private static native void nativeRecordStartTimestamp(long initTimeMillis);
 
     /**
@@ -254,7 +243,6 @@ public class FlutterMain {
                 sAotIsolateSnapshotData = metadata.getString(PUBLIC_AOT_ISOLATE_SNAPSHOT_DATA_KEY, DEFAULT_AOT_ISOLATE_SNAPSHOT_DATA);
                 sAotIsolateSnapshotInstr = metadata.getString(PUBLIC_AOT_ISOLATE_SNAPSHOT_INSTR_KEY, DEFAULT_AOT_ISOLATE_SNAPSHOT_INSTR);
                 sFlx = metadata.getString(PUBLIC_FLX_KEY, DEFAULT_FLX);
-                sSnapshotBlob = metadata.getString(PUBLIC_SNAPSHOT_BLOB_KEY, DEFAULT_SNAPSHOT_BLOB);
                 sFlutterAssetsDir = metadata.getString(PUBLIC_FLUTTER_ASSETS_DIR_KEY, DEFAULT_FLUTTER_ASSETS_DIR);
             }
         } catch (PackageManager.NameNotFoundException e) {
@@ -265,16 +253,20 @@ public class FlutterMain {
     private static void initResources(Context applicationContext) {
         Context context = applicationContext;
         new ResourceCleaner(context).start();
-        sResourceExtractor = new ResourceExtractor(context)
-            .addResources(SKY_RESOURCES)
+
+        sResourceExtractor = new ResourceExtractor(context);
+
+        String icuAssetPath = SHARED_ASSET_DIR + File.separator + SHARED_ASSET_ICU_DATA;
+        sResourceExtractor.addResource(icuAssetPath);
+        sIcuDataPath = PathUtils.getDataDirectory(applicationContext) + File.separator + icuAssetPath;
+
+        sResourceExtractor
             .addResource(fromFlutterAssets(sFlx))
-            .addResource(fromFlutterAssets(sSnapshotBlob))
             .addResource(fromFlutterAssets(sAotVmSnapshotData))
             .addResource(fromFlutterAssets(sAotVmSnapshotInstr))
             .addResource(fromFlutterAssets(sAotIsolateSnapshotData))
             .addResource(fromFlutterAssets(sAotIsolateSnapshotInstr))
-            .addResource(fromFlutterAssets(DEFAULT_KERNEL_BLOB))
-            .addResource(fromFlutterAssets(DEFAULT_PLATFORM_DILL));
+            .addResource(fromFlutterAssets(DEFAULT_KERNEL_BLOB));
         if (sIsPrecompiledAsSharedLibrary) {
           sResourceExtractor
             .addResource(sAotSharedLibraryPath);
@@ -283,8 +275,7 @@ public class FlutterMain {
             .addResource(sAotVmSnapshotData)
             .addResource(sAotVmSnapshotInstr)
             .addResource(sAotIsolateSnapshotData)
-            .addResource(sAotIsolateSnapshotInstr)
-            .addResource(sSnapshotBlob);
+            .addResource(sAotIsolateSnapshotInstr);
         }
         sResourceExtractor.start();
     }
@@ -293,11 +284,11 @@ public class FlutterMain {
      * Returns a list of the file names at the root of the application's asset
      * path.
      */
-    private static Set<String> listRootAssets(Context applicationContext) {
+    private static Set<String> listAssets(Context applicationContext, String path) {
         AssetManager manager = applicationContext.getResources().getAssets();
         try {
             return ImmutableSetBuilder.<String>newInstance()
-                .add(manager.list(""))
+                .add(manager.list(path))
                 .build();
         } catch (IOException e) {
             Log.e(TAG, "Unable to list assets", e);
@@ -306,7 +297,7 @@ public class FlutterMain {
     }
 
     private static void initAot(Context applicationContext) {
-        Set<String> assets = listRootAssets(applicationContext);
+        Set<String> assets = listAssets(applicationContext, "");
         sIsPrecompiledAsBlobs = assets.containsAll(Arrays.asList(
             sAotVmSnapshotData,
             sAotVmSnapshotInstr,

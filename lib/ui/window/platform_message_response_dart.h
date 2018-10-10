@@ -7,26 +7,26 @@
 
 #include "flutter/fml/message_loop.h"
 #include "flutter/lib/ui/window/platform_message_response.h"
-#include "lib/tonic/dart_persistent_value.h"
+#include "third_party/tonic/dart_persistent_value.h"
 
 namespace blink {
 
 class PlatformMessageResponseDart : public PlatformMessageResponse {
-  FRIEND_MAKE_REF_COUNTED(PlatformMessageResponseDart);
+  FML_FRIEND_MAKE_REF_COUNTED(PlatformMessageResponseDart);
 
  public:
   // Callable on any thread.
-  void Complete(std::vector<uint8_t> data) override;
+  void Complete(std::unique_ptr<fml::Mapping> data) override;
   void CompleteEmpty() override;
 
  protected:
   explicit PlatformMessageResponseDart(
       tonic::DartPersistentValue callback,
-      fxl::RefPtr<fxl::TaskRunner> ui_task_runner);
+      fml::RefPtr<fml::TaskRunner> ui_task_runner);
   ~PlatformMessageResponseDart() override;
 
   tonic::DartPersistentValue callback_;
-  fxl::RefPtr<fxl::TaskRunner> ui_task_runner_;
+  fml::RefPtr<fml::TaskRunner> ui_task_runner_;
 };
 
 }  // namespace blink

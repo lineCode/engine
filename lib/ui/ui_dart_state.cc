@@ -6,7 +6,8 @@
 
 #include "flutter/fml/message_loop.h"
 #include "flutter/lib/ui/window/window.h"
-#include "lib/tonic/converter/dart_converter.h"
+#include "third_party/tonic/converter/dart_converter.h"
+#include "third_party/tonic/dart_message_handler.h"
 
 using tonic::ToDart;
 
@@ -16,10 +17,11 @@ UIDartState::UIDartState(TaskRunners task_runners,
                          TaskObserverAdd add_callback,
                          TaskObserverRemove remove_callback,
                          fml::WeakPtr<GrContext> resource_context,
-                         fxl::RefPtr<flow::SkiaUnrefQueue> skia_unref_queue,
+                         fml::RefPtr<flow::SkiaUnrefQueue> skia_unref_queue,
                          std::string advisory_script_uri,
                          std::string advisory_script_entrypoint,
-                         std::string logger_prefix)
+                         std::string logger_prefix,
+                         IsolateNameServer* isolate_name_server)
     : task_runners_(std::move(task_runners)),
       add_callback_(std::move(add_callback)),
       remove_callback_(std::move(remove_callback)),
@@ -27,7 +29,8 @@ UIDartState::UIDartState(TaskRunners task_runners,
       advisory_script_uri_(std::move(advisory_script_uri)),
       advisory_script_entrypoint_(std::move(advisory_script_entrypoint)),
       logger_prefix_(std::move(logger_prefix)),
-      skia_unref_queue_(std::move(skia_unref_queue)) {
+      skia_unref_queue_(std::move(skia_unref_queue)),
+      isolate_name_server_(isolate_name_server) {
   AddOrRemoveTaskObserver(true /* add */);
 }
 
@@ -64,7 +67,7 @@ const TaskRunners& UIDartState::GetTaskRunners() const {
   return task_runners_;
 }
 
-fxl::RefPtr<flow::SkiaUnrefQueue> UIDartState::GetSkiaUnrefQueue() const {
+fml::RefPtr<flow::SkiaUnrefQueue> UIDartState::GetSkiaUnrefQueue() const {
   return skia_unref_queue_;
 }
 
@@ -87,7 +90,7 @@ void UIDartState::AddOrRemoveTaskObserver(bool add) {
     // the service isolate).
     return;
   }
-  FXL_DCHECK(add_callback_ && remove_callback_);
+  FML_DCHECK(add_callback_ && remove_callback_);
   if (add) {
     add_callback_(reinterpret_cast<intptr_t>(this),
                   [this]() { this->FlushMicrotasksNow(); });
@@ -98,6 +101,18 @@ void UIDartState::AddOrRemoveTaskObserver(bool add) {
 
 fml::WeakPtr<GrContext> UIDartState::GetResourceContext() const {
   return resource_context_;
+}
+
+IsolateNameServer* UIDartState::GetIsolateNameServer() {
+  return isolate_name_server_;
+}
+
+tonic::DartErrorHandleType UIDartState::GetLastError() {
+  tonic::DartErrorHandleType error = message_handler().isolate_last_error();
+  if (error == tonic::kNoError) {
+    error = microtask_queue_.GetLastError();
+  }
+  return error;
 }
 
 }  // namespace blink

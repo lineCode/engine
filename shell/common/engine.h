@@ -10,7 +10,11 @@
 
 #include "flutter/assets/asset_manager.h"
 #include "flutter/common/task_runners.h"
+#include "flutter/fml/macros.h"
+#include "flutter/fml/memory/weak_ptr.h"
+#include "flutter/lib/ui/semantics/custom_accessibility_action.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
+#include "flutter/lib/ui/text/font_collection.h"
 #include "flutter/lib/ui/window/platform_message.h"
 #include "flutter/lib/ui/window/viewport_metrics.h"
 #include "flutter/runtime/dart_vm.h"
@@ -19,52 +23,59 @@
 #include "flutter/shell/common/animator.h"
 #include "flutter/shell/common/rasterizer.h"
 #include "flutter/shell/common/run_configuration.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/weak_ptr.h"
 #include "third_party/skia/include/core/SkPicture.h"
 
 namespace shell {
 
 class Engine final : public blink::RuntimeDelegate {
  public:
+  // Used by Engine::Run
+  enum class RunStatus {
+    Success,                // Successful call to Run()
+    FailureAlreadyRunning,  // Isolate was already running; may not be
+                            // considered a failure by callers
+    Failure,  // Isolate could not be started or other unspecified failure
+  };
+
   class Delegate {
    public:
     virtual void OnEngineUpdateSemantics(
-        const Engine& engine,
-        blink::SemanticsNodeUpdates update) = 0;
+        blink::SemanticsNodeUpdates update,
+        blink::CustomAccessibilityActionUpdates actions) = 0;
 
     virtual void OnEngineHandlePlatformMessage(
-        const Engine& engine,
-        fxl::RefPtr<blink::PlatformMessage> message) = 0;
+        fml::RefPtr<blink::PlatformMessage> message) = 0;
+
+    virtual void OnPreEngineRestart() = 0;
   };
 
   Engine(Delegate& delegate,
-         const blink::DartVM& vm,
-         fxl::RefPtr<blink::DartSnapshot> isolate_snapshot,
-         fxl::RefPtr<blink::DartSnapshot> shared_snapshot,
+         blink::DartVM& vm,
+         fml::RefPtr<blink::DartSnapshot> isolate_snapshot,
+         fml::RefPtr<blink::DartSnapshot> shared_snapshot,
          blink::TaskRunners task_runners,
          blink::Settings settings,
          std::unique_ptr<Animator> animator,
          fml::WeakPtr<GrContext> resource_context,
-         fxl::RefPtr<flow::SkiaUnrefQueue> unref_queue);
+         fml::RefPtr<flow::SkiaUnrefQueue> unref_queue);
 
   ~Engine() override;
 
   fml::WeakPtr<Engine> GetWeakPtr() const;
 
-  FXL_WARN_UNUSED_RESULT
-  bool Run(RunConfiguration configuration);
+  FML_WARN_UNUSED_RESULT
+  RunStatus Run(RunConfiguration configuration);
 
   // Used to "cold reload" a running application where the shell (along with the
   // platform view and its rasterizer bindings) remains the same but the root
   // isolate is torn down and restarted with the new configuration. Only used in
   // the development workflow.
-  FXL_WARN_UNUSED_RESULT
+  FML_WARN_UNUSED_RESULT
   bool Restart(RunConfiguration configuration);
 
   bool UpdateAssetManager(fml::RefPtr<blink::AssetManager> asset_manager);
 
-  void BeginFrame(fxl::TimePoint frame_time);
+  void BeginFrame(fml::TimePoint frame_time);
 
   void NotifyIdle(int64_t deadline);
 
@@ -76,8 +87,6 @@ class Engine final : public blink::RuntimeDelegate {
 
   tonic::DartErrorHandleType GetUIIsolateLastError();
 
-  tonic::DartErrorHandleType GetLoadScriptError();
-
   std::pair<bool, uint32_t> GetUIIsolateReturnCode();
 
   void OnOutputSurfaceCreated();
@@ -86,7 +95,7 @@ class Engine final : public blink::RuntimeDelegate {
 
   void SetViewportMetrics(const blink::ViewportMetrics& metrics);
 
-  void DispatchPlatformMessage(fxl::RefPtr<blink::PlatformMessage> message);
+  void DispatchPlatformMessage(fml::RefPtr<blink::PlatformMessage> message);
 
   void DispatchPointerDataPacket(const blink::PointerDataPacket& packet);
 
@@ -96,19 +105,24 @@ class Engine final : public blink::RuntimeDelegate {
 
   void SetSemanticsEnabled(bool enabled);
 
+  void SetAccessibilityFeatures(int32_t flags);
+
   void ScheduleFrame(bool regenerate_layer_tree = true) override;
+
+  // |blink::RuntimeDelegate|
+  blink::FontCollection& GetFontCollection() override;
 
  private:
   Engine::Delegate& delegate_;
   const blink::Settings settings_;
   std::unique_ptr<Animator> animator_;
   std::unique_ptr<blink::RuntimeController> runtime_controller_;
-  tonic::DartErrorHandleType load_script_error_;
   std::string initial_route_;
   blink::ViewportMetrics viewport_metrics_;
   fml::RefPtr<blink::AssetManager> asset_manager_;
   bool activity_running_;
   bool have_surface_;
+  blink::FontCollection font_collection_;
   fml::WeakPtrFactory<Engine> weak_factory_;
 
   // |blink::RuntimeDelegate|
@@ -118,11 +132,13 @@ class Engine final : public blink::RuntimeDelegate {
   void Render(std::unique_ptr<flow::LayerTree> layer_tree) override;
 
   // |blink::RuntimeDelegate|
-  void UpdateSemantics(blink::SemanticsNodeUpdates update) override;
+  void UpdateSemantics(
+      blink::SemanticsNodeUpdates update,
+      blink::CustomAccessibilityActionUpdates actions) override;
 
   // |blink::RuntimeDelegate|
   void HandlePlatformMessage(
-      fxl::RefPtr<blink::PlatformMessage> message) override;
+      fml::RefPtr<blink::PlatformMessage> message) override;
 
   void StopAnimator();
 
@@ -131,19 +147,19 @@ class Engine final : public blink::RuntimeDelegate {
   bool HandleLifecyclePlatformMessage(blink::PlatformMessage* message);
 
   bool HandleNavigationPlatformMessage(
-      fxl::RefPtr<blink::PlatformMessage> message);
+      fml::RefPtr<blink::PlatformMessage> message);
 
   bool HandleLocalizationPlatformMessage(blink::PlatformMessage* message);
 
   void HandleSettingsPlatformMessage(blink::PlatformMessage* message);
 
-  void HandleAssetPlatformMessage(fxl::RefPtr<blink::PlatformMessage> message);
+  void HandleAssetPlatformMessage(fml::RefPtr<blink::PlatformMessage> message);
 
   bool GetAssetAsBuffer(const std::string& name, std::vector<uint8_t>* data);
 
-  bool PrepareAndLaunchIsolate(RunConfiguration configuration);
+  RunStatus PrepareAndLaunchIsolate(RunConfiguration configuration);
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(Engine);
+  FML_DISALLOW_COPY_AND_ASSIGN(Engine);
 };
 
 }  // namespace shell

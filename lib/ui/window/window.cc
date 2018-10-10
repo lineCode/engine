@@ -7,12 +7,12 @@
 #include "flutter/lib/ui/compositing/scene.h"
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/window/platform_message_response_dart.h"
-#include "lib/tonic/converter/dart_converter.h"
-#include "lib/tonic/dart_args.h"
-#include "lib/tonic/dart_library_natives.h"
-#include "lib/tonic/dart_microtask_queue.h"
-#include "lib/tonic/logging/dart_invoke.h"
-#include "lib/tonic/typed_data/dart_byte_data.h"
+#include "third_party/tonic/converter/dart_converter.h"
+#include "third_party/tonic/dart_args.h"
+#include "third_party/tonic/dart_library_natives.h"
+#include "third_party/tonic/dart_microtask_queue.h"
+#include "third_party/tonic/logging/dart_invoke.h"
+#include "third_party/tonic/typed_data/dart_byte_data.h"
 
 using tonic::DartInvokeField;
 using tonic::DartState;
@@ -66,20 +66,20 @@ Dart_Handle SendPlatformMessage(Dart_Handle window,
     return ToDart("Platform messages can only be sent from the main isolate");
   }
 
-  fxl::RefPtr<PlatformMessageResponse> response;
+  fml::RefPtr<PlatformMessageResponse> response;
   if (!Dart_IsNull(callback)) {
-    response = fxl::MakeRefCounted<PlatformMessageResponseDart>(
+    response = fml::MakeRefCounted<PlatformMessageResponseDart>(
         tonic::DartPersistentValue(dart_state, callback),
         dart_state->GetTaskRunners().GetUITaskRunner());
   }
   if (Dart_IsNull(data.dart_handle())) {
     dart_state->window()->client()->HandlePlatformMessage(
-        fxl::MakeRefCounted<PlatformMessage>(name, response));
+        fml::MakeRefCounted<PlatformMessage>(name, response));
   } else {
     const uint8_t* buffer = static_cast<const uint8_t*>(data.data());
 
     dart_state->window()->client()->HandlePlatformMessage(
-        fxl::MakeRefCounted<PlatformMessage>(
+        fml::MakeRefCounted<PlatformMessage>(
             name, std::vector<uint8_t>(buffer, buffer + data.length_in_bytes()),
             response));
   }
@@ -98,6 +98,7 @@ void RespondToPlatformMessage(Dart_Handle window,
     UIDartState::Current()->window()->CompletePlatformMessageEmptyResponse(
         response_id);
   } else {
+    // TODO(engine): Avoid this copy.
     const uint8_t* buffer = static_cast<const uint8_t*>(data.data());
     UIDartState::Current()->window()->CompletePlatformMessageResponse(
         response_id,
@@ -120,7 +121,7 @@ Dart_Handle ToByteData(const std::vector<uint8_t>& buffer) {
   Dart_TypedData_Type type;
   void* data = nullptr;
   intptr_t num_bytes = 0;
-  FXL_CHECK(!Dart_IsError(
+  FML_CHECK(!Dart_IsError(
       Dart_TypedDataAcquireData(data_handle, &type, &data, &num_bytes)));
 
   memcpy(data, buffer.data(), num_bytes);
@@ -141,30 +142,29 @@ void Window::DidCreateIsolate() {
 void Window::UpdateWindowMetrics(const ViewportMetrics& metrics) {
   viewport_metrics_ = metrics;
 
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
-  DartInvokeField(
-      library_.value(), "_updateWindowMetrics",
-      {
-          ToDart(metrics.device_pixel_ratio),
-          ToDart(static_cast<double>(metrics.physical_width)),
-          ToDart(static_cast<double>(metrics.physical_height)),
-          ToDart(static_cast<double>(metrics.physical_padding_top)),
-          ToDart(static_cast<double>(metrics.physical_padding_right)),
-          ToDart(static_cast<double>(metrics.physical_padding_bottom)),
-          ToDart(static_cast<double>(metrics.physical_padding_left)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_top)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_right)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_bottom)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_left)),
-      });
+  DartInvokeField(library_.value(), "_updateWindowMetrics",
+                  {
+                      ToDart(metrics.device_pixel_ratio),
+                      ToDart(metrics.physical_width),
+                      ToDart(metrics.physical_height),
+                      ToDart(metrics.physical_padding_top),
+                      ToDart(metrics.physical_padding_right),
+                      ToDart(metrics.physical_padding_bottom),
+                      ToDart(metrics.physical_padding_left),
+                      ToDart(metrics.physical_view_inset_top),
+                      ToDart(metrics.physical_view_inset_right),
+                      ToDart(metrics.physical_view_inset_bottom),
+                      ToDart(metrics.physical_view_inset_left),
+                  });
 }
 
 void Window::UpdateLocale(const std::string& language_code,
                           const std::string& country_code) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -177,7 +177,7 @@ void Window::UpdateLocale(const std::string& language_code,
 }
 
 void Window::UpdateUserSettingsData(const std::string& data) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -189,7 +189,7 @@ void Window::UpdateUserSettingsData(const std::string& data) {
 }
 
 void Window::UpdateSemanticsEnabled(bool enabled) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -198,8 +198,18 @@ void Window::UpdateSemanticsEnabled(bool enabled) {
                   {ToDart(enabled)});
 }
 
-void Window::DispatchPlatformMessage(fxl::RefPtr<PlatformMessage> message) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+void Window::UpdateAccessibilityFeatures(int32_t values) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
+  if (!dart_state)
+    return;
+  tonic::DartState::Scope scope(dart_state);
+
+  DartInvokeField(library_.value(), "_updateAccessibilityFeatures",
+                  {ToDart(values)});
+}
+
+void Window::DispatchPlatformMessage(fml::RefPtr<PlatformMessage> message) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -220,7 +230,7 @@ void Window::DispatchPlatformMessage(fxl::RefPtr<PlatformMessage> message) {
 }
 
 void Window::DispatchPointerDataPacket(const PointerDataPacket& packet) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -235,7 +245,7 @@ void Window::DispatchPointerDataPacket(const PointerDataPacket& packet) {
 void Window::DispatchSemanticsAction(int32_t id,
                                      SemanticsAction action,
                                      std::vector<uint8_t> args) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -250,13 +260,13 @@ void Window::DispatchSemanticsAction(int32_t id,
       {ToDart(id), ToDart(static_cast<int32_t>(action)), args_handle});
 }
 
-void Window::BeginFrame(fxl::TimePoint frameTime) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+void Window::BeginFrame(fml::TimePoint frameTime) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
 
-  int64_t microseconds = (frameTime - fxl::TimePoint()).ToMicroseconds();
+  int64_t microseconds = (frameTime - fml::TimePoint()).ToMicroseconds();
 
   DartInvokeField(library_.value(), "_beginFrame",
                   {
@@ -288,7 +298,7 @@ void Window::CompletePlatformMessageResponse(int response_id,
     return;
   auto response = std::move(it->second);
   pending_responses_.erase(it);
-  response->Complete(std::move(data));
+  response->Complete(std::make_unique<fml::DataMapping>(std::move(data)));
 }
 
 void Window::RegisterNatives(tonic::DartLibraryNatives* natives) {

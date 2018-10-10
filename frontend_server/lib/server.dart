@@ -20,12 +20,14 @@ import 'package:vm/frontend_server.dart' as frontend show FrontendCompiler,
 class _FlutterFrontendCompiler implements frontend.CompilerInterface{
   final frontend.CompilerInterface _compiler;
 
-  _FlutterFrontendCompiler(StringSink output, {bool trackWidgetCreation: false}):
-      _compiler = new frontend.FrontendCompiler(output,
-          transformer: trackWidgetCreation ? new WidgetCreatorTracker() : null);
+  _FlutterFrontendCompiler(StringSink output,
+      {bool trackWidgetCreation: false, bool unsafePackageSerialization}) :
+          _compiler = new frontend.FrontendCompiler(output,
+          transformer: trackWidgetCreation ? new WidgetCreatorTracker() : null,
+          unsafePackageSerialization: unsafePackageSerialization);
 
   @override
-  Future<Null> compile(String filename, ArgResults options, {IncrementalCompiler generator}) async {
+  Future<bool> compile(String filename, ArgResults options, {IncrementalCompiler generator}) async {
     return _compiler.compile(filename, options, generator: generator);
   }
 
@@ -37,6 +39,11 @@ class _FlutterFrontendCompiler implements frontend.CompilerInterface{
   @override
   void acceptLastDelta() {
     _compiler.acceptLastDelta();
+  }
+
+  @override
+  Future<void> rejectLastDelta() async {
+    return _compiler.rejectLastDelta();
   }
 
   @override
@@ -73,7 +80,7 @@ class _FlutterFrontendCompiler implements frontend.CompilerInterface{
 /// version for testing.
 Future<int> starter(
     List<String> args, {
-      _FlutterFrontendCompiler compiler,
+      frontend.CompilerInterface compiler,
       Stream<List<int>> input,
       StringSink output,
     }) async {
@@ -118,14 +125,15 @@ Future<int> starter(
     }
   }
 
-  compiler ??= new _FlutterFrontendCompiler(output, trackWidgetCreation: options['track-widget-creation']);
+  compiler ??= new _FlutterFrontendCompiler(output,
+      trackWidgetCreation: options['track-widget-creation'],
+      unsafePackageSerialization: options['unsafe-package-serialization']);
 
   if (options.rest.isNotEmpty) {
-    exit(await compiler.compile(options.rest[0], options)
-        ? 0
-        : 254);
+    return await compiler.compile(options.rest[0], options) ? 0 : 254;
   }
 
-  frontend.listenAndCompile(compiler, input ?? stdin, options, () { exit(0); } );
-  return 0;
+  final Completer<int> completer = new Completer<int>();
+  frontend.listenAndCompile(compiler, input ?? stdin, options, completer);
+  return completer.future;
 }

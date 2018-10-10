@@ -11,10 +11,10 @@
 
 #include "dart-pkg/zircon/sdk_ext/handle.h"
 #include "flutter/flow/scene_update_context.h"
-#include "lib/fxl/build_config.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/ref_counted.h"
-#include "lib/ui/scenic/client/resources.h"
+#include "flutter/fml/build_config.h"
+#include "flutter/fml/macros.h"
+#include "flutter/fml/memory/ref_counted.h"
+#include "lib/ui/scenic/cpp/resources.h"
 #include "third_party/flutter/fml/task_runner.h"
 #include "third_party/skia/include/core/SkPoint.h"
 
@@ -23,27 +23,27 @@ namespace flow {
 // Wrapper class for ExportNode to use on UI Thread. When ExportNodeHolder is
 // destroyed, a task is posted on the Rasterizer thread to dispose the resources
 // held by the ExportNode.
-class ExportNodeHolder : public fxl::RefCountedThreadSafe<ExportNodeHolder> {
+class ExportNodeHolder : public fml::RefCountedThreadSafe<ExportNodeHolder> {
  public:
-  ExportNodeHolder(fxl::RefPtr<fxl::TaskRunner> gpu_task_runner,
-                   fxl::RefPtr<zircon::dart::Handle> export_token_handle);
+  ExportNodeHolder(fml::RefPtr<fml::TaskRunner> gpu_task_runner,
+                   fml::RefPtr<zircon::dart::Handle> export_token_handle);
   ~ExportNodeHolder();
 
   // Calls Bind() on the wrapped ExportNode.
   void Bind(SceneUpdateContext& context,
-            scenic_lib::ContainerNode& container,
+            scenic::ContainerNode& container,
             const SkPoint& offset,
             bool hit_testable);
 
   ExportNode* export_node() { return export_node_.get(); }
 
  private:
-  fxl::RefPtr<fxl::TaskRunner> gpu_task_runner_;
+  fml::RefPtr<fml::TaskRunner> gpu_task_runner_;
   std::unique_ptr<ExportNode> export_node_;
 
-  FRIEND_MAKE_REF_COUNTED(ExportNodeHolder);
-  FRIEND_REF_COUNTED_THREAD_SAFE(ExportNodeHolder);
-  FXL_DISALLOW_COPY_AND_ASSIGN(ExportNodeHolder);
+  FML_FRIEND_MAKE_REF_COUNTED(ExportNodeHolder);
+  FML_FRIEND_REF_COUNTED_THREAD_SAFE(ExportNodeHolder);
+  FML_DISALLOW_COPY_AND_ASSIGN(ExportNodeHolder);
 };
 
 // Represents a node which is being exported from the session.
@@ -51,14 +51,14 @@ class ExportNodeHolder : public fxl::RefCountedThreadSafe<ExportNodeHolder> {
 // must be created and destroyed by the rasterizer thread.
 class ExportNode {
  public:
-  ExportNode(fxl::RefPtr<zircon::dart::Handle> export_token_handle);
+  ExportNode(fml::RefPtr<zircon::dart::Handle> export_token_handle);
 
   ~ExportNode();
 
   // Binds the export token to the entity node and adds it as a child of
   // the specified container. Must be called on the Rasterizer thread.
   void Bind(SceneUpdateContext& context,
-            scenic_lib::ContainerNode& container,
+            scenic::ContainerNode& container,
             const SkPoint& offset,
             bool hit_testable);
 
@@ -73,9 +73,9 @@ class ExportNode {
   // Member variables can only be read or modified on Rasterizer thread.
   SceneUpdateContext* scene_update_context_ = nullptr;
   zx::eventpair export_token_;
-  std::unique_ptr<scenic_lib::EntityNode> node_;
+  std::unique_ptr<scenic::EntityNode> node_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(ExportNode);
+  FML_DISALLOW_COPY_AND_ASSIGN(ExportNode);
 };
 
 }  // namespace flow

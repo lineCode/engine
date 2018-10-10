@@ -7,6 +7,8 @@
 
 #include "flutter/flow/layers/container_layer.h"
 
+#include "third_party/skia/include/core/SkImageFilter.h"
+
 namespace flow {
 
 class BackdropFilterLayer : public ContainerLayer {
@@ -21,7 +23,7 @@ class BackdropFilterLayer : public ContainerLayer {
  private:
   sk_sp<SkImageFilter> filter_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(BackdropFilterLayer);
+  FML_DISALLOW_COPY_AND_ASSIGN(BackdropFilterLayer);
 };
 
 }  // namespace flow

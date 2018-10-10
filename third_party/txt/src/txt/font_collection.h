@@ -21,12 +21,12 @@
 #include <set>
 #include <string>
 #include <unordered_map>
-#include "lib/fxl/macros.h"
+#include "flutter/fml/macros.h"
 #include "minikin/FontCollection.h"
 #include "minikin/FontFamily.h"
-#include "third_party/googletest/googletest/include/gtest/gtest_prod.h" // nogncheck
+#include "third_party/googletest/googletest/include/gtest/gtest_prod.h"  // nogncheck
+#include "third_party/skia/include/core/SkFontMgr.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
-#include "third_party/skia/include/ports/SkFontMgr.h"
 #include "txt/asset_font_manager.h"
 #include "txt/text_style.h"
 
@@ -82,7 +82,6 @@ class FontCollection : public std::enable_shared_from_this<FontCollection> {
       fallback_fonts_;
   std::unordered_map<std::string, std::set<std::string>>
       fallback_fonts_for_locale_;
-  std::shared_ptr<minikin::FontFamily> null_family_;
   bool enable_font_fallback_;
 
   std::vector<sk_sp<SkFontMgr>> GetFontManagerOrder() const;
@@ -95,7 +94,7 @@ class FontCollection : public std::enable_shared_from_this<FontCollection> {
       const sk_sp<SkFontMgr>& manager,
       const std::string& family_name);
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(FontCollection);
+  FML_DISALLOW_COPY_AND_ASSIGN(FontCollection);
 };
 
 }  // namespace txt

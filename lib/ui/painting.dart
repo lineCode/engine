@@ -102,6 +102,7 @@ class Color {
   /// For example, to get a fully opaque orange, you would use `const
   /// Color(0xFFFF9000)` (`FF` for the alpha, `FF` for the red, `90` for the
   /// green, and `00` for the blue).
+  @pragma('vm:entry-point')
   const Color(int value) : value = value & 0xFFFFFFFF;
 
   /// Construct a color from the lower 8 bits of four integers.
@@ -114,7 +115,7 @@ class Color {
   ///
   /// Out of range values are brought into range using modulo 255.
   ///
-  /// See also [fromARGB], which takes the alpha value as a floating point
+  /// See also [fromRGBO], which takes the alpha value as a floating point
   /// value.
   const Color.fromARGB(int a, int r, int g, int b) :
     value = (((a & 0xff) << 24) |
@@ -942,6 +943,89 @@ enum PaintingStyle {
   stroke,
 }
 
+
+/// Different ways to clip a widget's content.
+enum Clip {
+  /// No clip at all.
+  ///
+  /// This is the default option for most widgets: if the content does not
+  /// overflow the widget boundary, don't pay any performance cost for clipping.
+  ///
+  /// If the content does overflow, please explicitly specify the following
+  /// [Clip] options:
+  ///  * [hardEdge], which is the fastest clipping, but with lower fidelity.
+  ///  * [antiAlias], which is a little slower than [hardEdge], but with smoothed edges.
+  ///  * [antiAliasWithSaveLayer], which is much slower than [antiAlias], and should
+  ///    rarely be used.
+  none,
+
+  /// Clip, but do not apply anti-aliasing.
+  ///
+  /// This mode enables clipping, but curves and non-axis-aligned straight lines will be
+  /// jagged as no effort is made to anti-alias.
+  ///
+  /// Faster than other clipping modes, but slower than [none].
+  ///
+  /// This is a reasonable choice when clipping is needed, if the container is an axis-
+  /// aligned rectangle or an axis-aligned rounded rectangle with very small corner radii.
+  ///
+  /// See also:
+  ///
+  ///  * [antiAlias], which is more reasonable when clipping is needed and the shape is not
+  ///    an axis-aligned rectangle.
+  hardEdge,
+
+  /// Clip with anti-aliasing.
+  ///
+  /// This mode has anti-aliased clipping edges to achieve a smoother look.
+  ///
+  /// It' s much faster than [antiAliasWithSaveLayer], but slower than [hardEdge].
+  ///
+  /// This will be the common case when dealing with circles and arcs.
+  ///
+  /// Different from [hardEdge] and [antiAliasWithSaveLayer], this clipping may have
+  /// bleeding edge artifacts.
+  /// (See https://fiddle.skia.org/c/21cb4c2b2515996b537f36e7819288ae for an example.)
+  ///
+  /// See also:
+  ///
+  ///  * [hardEdge], which is a little faster, but with lower fidelity.
+  ///  * [antiAliasWithSaveLayer], which is much slower, but can avoid the
+  ///    bleeding edges if there's no other way.
+  ///  * [Paint.isAntiAlias], which is the anti-aliasing switch for general draw operations.
+  antiAlias,
+
+  /// Clip with anti-aliasing and saveLayer immediately following the clip.
+  ///
+  /// This mode not only clips with anti-aliasing, but also allocates an offscreen
+  /// buffer. All subsequent paints are carried out on that buffer before finally
+  /// being clipped and composited back.
+  ///
+  /// This is very slow. It has no bleeding edge artifacts (that [antiAlias] has)
+  /// but it changes the semantics as an offscreen buffer is now introduced.
+  /// (See https://github.com/flutter/flutter/issues/18057#issuecomment-394197336
+  /// for a difference between paint without saveLayer and paint with saveLayer.)
+  ///
+  /// This will be only rarely needed. One case where you might need this is if
+  /// you have an image overlaid on a very different background color. In these
+  /// cases, consider whether you can avoid overlaying multiple colors in one
+  /// spot (e.g. by having the background color only present where the image is
+  /// absent). If you can, [antiAlias] would be fine and much faster.
+  ///
+  /// See also:
+  ///
+  ///  * [antiAlias], which is much faster, and has similar clipping results.
+  antiAliasWithSaveLayer,
+}
+
+/// The global default value of whether and how to clip a widget. This is only for
+/// temporary migration from default-to-clip to default-to-NOT-clip.
+///
+// TODO(liyuqian): Set it to Clip.none. (https://github.com/flutter/flutter/issues/18057)
+// We currently have Clip.antiAlias to preserve our old behaviors.
+@Deprecated("Do not use this as it'll soon be removed after we set the default behavior to Clip.none.")
+const Clip defaultClipBehavior = Clip.antiAlias;
+
 // If we actually run on big endian machines, we'll need to do something smarter
 // here. We don't use [Endian.Host] because it's not a compile-time
 // constant and can't propagate into the set/get calls.
@@ -982,6 +1066,7 @@ class Paint {
   static const int _kMaskFilterIndex = 12;
   static const int _kMaskFilterBlurStyleIndex = 13;
   static const int _kMaskFilterSigmaIndex = 14;
+  static const int _kInvertColorIndex = 15;
 
   static const int _kIsAntiAliasOffset = _kIsAntiAliasIndex << 2;
   static const int _kColorOffset = _kColorIndex << 2;
@@ -998,6 +1083,7 @@ class Paint {
   static const int _kMaskFilterOffset = _kMaskFilterIndex << 2;
   static const int _kMaskFilterBlurStyleOffset = _kMaskFilterBlurStyleIndex << 2;
   static const int _kMaskFilterSigmaOffset = _kMaskFilterSigmaIndex << 2;
+  static const int _kInvertColorOffset = _kInvertColorIndex << 2;
   // If you add more fields, remember to update _kDataByteCount.
   static const int _kDataByteCount = 75;
 
@@ -1280,6 +1366,18 @@ class Paint {
     }
   }
 
+  /// Whether the colors of the image are inverted when drawn.
+  ///
+  /// inverting the colors of an image applies a new color filter that will
+  /// be composed with any user provided color filters. This is primarily
+  /// used for implementing smart invert on iOS.
+  bool get invertColors {
+    return _data.getInt32(_kInvertColorOffset, _kFakeHostEndian) == 1;
+  }
+  set invertColors(bool value) {
+    _data.setInt32(_kInvertColorOffset, value ? 1 : 0, _kFakeHostEndian);
+  }
+
   @override
   String toString() {
     final StringBuffer result = new StringBuffer();
@@ -1328,8 +1426,12 @@ class Paint {
       result.write('${semicolon}filterQuality: $filterQuality');
       semicolon = '; ';
     }
-    if (shader != null)
+    if (shader != null) {
       result.write('${semicolon}shader: $shader');
+      semicolon = '; ';
+    }
+    if (invertColors)
+      result.write('${semicolon}invert: $invertColors');
     result.write(')');
     return result.toString();
   }
@@ -1367,6 +1469,34 @@ enum ImageByteFormat {
   png,
 }
 
+/// The format of pixel data given to [decodeImageFromPixels].
+enum PixelFormat {
+  /// Each pixel is 32 bits, with the highest 8 bits encoding red, the next 8
+  /// bits encoding green, the next 8 bits encoding blue, and the lowest 8 bits
+  /// encoding alpha.
+  rgba8888,
+
+  /// Each pixel is 32 bits, with the highest 8 bits encoding blue, the next 8
+  /// bits encoding green, the next 8 bits encoding red, and the lowest 8 bits
+  /// encoding alpha.
+  bgra8888,
+}
+
+class _ImageInfo {
+  _ImageInfo(this.width, this.height, this.format, this.rowBytes) {
+    rowBytes ??= width * 4;
+  }
+
+  @pragma('vm:entry-point', 'get')
+  int width;
+  @pragma('vm:entry-point', 'get')
+  int height;
+  @pragma('vm:entry-point', 'get')
+  int format;
+  @pragma('vm:entry-point', 'get')
+  int rowBytes;
+}
+
 /// Opaque handle to raw decoded image data (pixels).
 ///
 /// To obtain an [Image] object, use [instantiateImageCodec].
@@ -1378,6 +1508,7 @@ class Image extends NativeFieldWrapperClass2 {
   /// or extended directly.
   ///
   /// To obtain an [Image] object, use [instantiateImageCodec].
+  @pragma('vm:entry-point')
   Image._();
 
   /// The number of image pixels along the image's horizontal axis.
@@ -1425,6 +1556,7 @@ class FrameInfo extends NativeFieldWrapperClass2 {
   ///
   /// To obtain an instance of the [FrameInfo] interface, see
   /// [Codec.getNextFrame].
+  @pragma('vm:entry-point')
   FrameInfo._();
 
   /// The duration this frame should be shown.
@@ -1442,6 +1574,7 @@ class Codec extends NativeFieldWrapperClass2 {
   ///
   /// To obtain an instance of the [Codec] interface, see
   /// [instantiateImageCodec].
+  @pragma('vm:entry-point')
   Codec._();
 
   /// Number of frames in this image.
@@ -1473,22 +1606,32 @@ class Codec extends NativeFieldWrapperClass2 {
 /// Instantiates an image codec [Codec] object.
 ///
 /// [list] is the binary image data (e.g a PNG or GIF binary data).
-/// The data can be for either static or animated images.
+/// The data can be for either static or animated images. The following image
+/// formats are supported: {@macro flutter.dart:ui.imageFormats}
 ///
-/// The following image formats are supported: {@macro flutter.dart:ui.imageFormats}
+/// The [decodedCacheRatioCap] is the default maximum multiple of the compressed
+/// image size to cache when decoding animated image frames. For example,
+/// setting this to `2.0` means that a 400KB GIF would be allowed at most to use
+/// 800KB of memory caching unessential decoded frames. Caching decoded frames
+/// saves CPU but can result in out-of-memory crashes when decoding large (or
+/// multiple) animated images. Note that GIFs are highly compressed, and it's
+/// unlikely that a factor that low will be sufficient to cache all decoded
+/// frames. The default value is `25.0`.
 ///
 /// The returned future can complete with an error if the image decoding has
 /// failed.
-Future<Codec> instantiateImageCodec(Uint8List list) {
+Future<Codec> instantiateImageCodec(Uint8List list, {
+  double decodedCacheRatioCap = double.infinity,
+}) {
   return _futurize(
-    (_Callback<Codec> callback) => _instantiateImageCodec(list, callback)
+    (_Callback<Codec> callback) => _instantiateImageCodec(list, callback, null, decodedCacheRatioCap),
   );
 }
 
 /// Instantiates a [Codec] object for an image binary data.
 ///
 /// Returns an error message if the instantiation has failed, null otherwise.
-String _instantiateImageCodec(Uint8List list, _Callback<Codec> callback)
+String _instantiateImageCodec(Uint8List list, _Callback<Codec> callback, _ImageInfo imageInfo, double decodedCacheRatioCap)
   native 'instantiateImageCodec';
 
 /// Loads a single image frame from a byte array into an [Image] object.
@@ -1499,10 +1642,43 @@ void decodeImageFromList(Uint8List list, ImageDecoderCallback callback) {
   _decodeImageFromListAsync(list, callback);
 }
 
-Future<Null> _decodeImageFromListAsync(Uint8List list, ImageDecoderCallback callback) async {
+Future<Null> _decodeImageFromListAsync(Uint8List list,
+                                       ImageDecoderCallback callback) async {
   final Codec codec = await instantiateImageCodec(list);
   final FrameInfo frameInfo = await codec.getNextFrame();
   callback(frameInfo.image);
+}
+
+/// Convert an array of pixel values into an [Image] object.
+///
+/// [pixels] is the pixel data in the encoding described by [format].
+///
+/// [rowBytes] is the number of bytes consumed by each row of pixels in the
+/// data buffer.  If unspecified, it defaults to [width] multipled by the
+/// number of bytes per pixel in the provided [format].
+///
+/// The [decodedCacheRatioCap] is the default maximum multiple of the compressed
+/// image size to cache when decoding animated image frames. For example,
+/// setting this to `2.0` means that a 400KB GIF would be allowed at most to use
+/// 800KB of memory caching unessential decoded frames. Caching decoded frames
+/// saves CPU but can result in out-of-memory crashes when decoding large (or
+/// multiple) animated images. Note that GIFs are highly compressed, and it's
+/// unlikely that a factor that low will be sufficient to cache all decoded
+/// frames. The default value is `25.0`.
+void decodeImageFromPixels(
+  Uint8List pixels,
+  int width,
+  int height,
+  PixelFormat format,
+  ImageDecoderCallback callback,
+  {int rowBytes, double decodedCacheRatioCap = double.infinity}
+) {
+  final _ImageInfo imageInfo = new _ImageInfo(width, height, format.index, rowBytes);
+  final Future<Codec> codecFuture = _futurize(
+    (_Callback<Codec> callback) => _instantiateImageCodec(pixels, callback, imageInfo, decodedCacheRatioCap)
+  );
+  codecFuture.then((Codec codec) => codec.getNextFrame())
+      .then((FrameInfo frameInfo) => callback(frameInfo.image));
 }
 
 /// Determines the winding rule that decides how the interior of a [Path] is
@@ -1530,16 +1706,16 @@ enum PathFillType {
 }
 
 /// Strategies for combining paths.
-/// 
+///
 /// See also:
-/// 
+///
 /// * [Path.combine], which uses this enum to decide how to combine two paths.
 // Must be kept in sync with SkPathOp
 enum PathOperation {
   /// Subtract the second path from the first path.
   ///
   /// For example, if the two paths are overlapping circles of equal diameter
-  /// but differing centers, the result would be a crescent portion of the 
+  /// but differing centers, the result would be a crescent portion of the
   /// first circle that was not overlapped by the second circle.
   ///
   /// See also:
@@ -1549,33 +1725,33 @@ enum PathOperation {
   difference,
   /// Create a new path that is the intersection of the two paths, leaving the
   /// overlapping pieces of the path.
-  /// 
+  ///
   /// For example, if the two paths are overlapping circles of equal diameter
   /// but differing centers, the result would be only the overlapping portion
   /// of the two circles.
-  /// 
+  ///
   /// See also:
   ///  * [xor], which is the inverse of this operation
   intersect,
   /// Create a new path that is the union (inclusive-or) of the two paths.
-  /// 
+  ///
   /// For example, if the two paths are overlapping circles of equal diameter
-  /// but differing centers, the result would be a figure-eight like shape 
+  /// but differing centers, the result would be a figure-eight like shape
   /// matching the outer boundaries of both circles.
   union,
-  /// Create a new path that is the exclusive-or of the two paths, leaving 
+  /// Create a new path that is the exclusive-or of the two paths, leaving
   /// everything but the overlapping pieces of the path.
-  /// 
+  ///
   /// For example, if the two paths are overlapping circles of equal diameter
   /// but differing centers, the figure-eight like shape less the overlapping parts
-  /// 
+  ///
   /// See also:
   ///  * [intersect], which is the inverse of this operation
   xor,
   /// Subtract the first path from the second path.
   ///
   /// For example, if the two paths are overlapping circles of equal diameter
-  /// but differing centers, the result would be a crescent portion of the 
+  /// but differing centers, the result would be a crescent portion of the
   /// second circle that was not overlapped by the first circle.
   ///
   /// See also:
@@ -1604,12 +1780,13 @@ enum PathOperation {
 /// used to create clip regions using [Canvas.clipPath].
 class Path extends NativeFieldWrapperClass2 {
   /// Create a new empty [Path] object.
+  @pragma('vm:entry-point')
   Path() { _constructor(); }
   void _constructor() native 'Path_constructor';
 
   /// Creates a copy of another [Path].
-  /// 
-  /// This copy is fast and does not require additional memory unless either 
+  ///
+  /// This copy is fast and does not require additional memory unless either
   /// the `source` path or the path returned by this constructor are modified.
   factory Path.from(Path source) {
     return source._clone();
@@ -1815,7 +1992,7 @@ class Path extends NativeFieldWrapperClass2 {
 
   /// Adds a new subpath that consists of the given `path` offset by the given
   /// `offset`.
-  /// 
+  ///
   /// If `matrix4` is specified, the path will be transformed by this matrix
   /// after the matrix is translated by the given offset. The matrix is a 4x4
   /// matrix stored in column major order.
@@ -1831,10 +2008,10 @@ class Path extends NativeFieldWrapperClass2 {
   }
   void _addPath(Path path, double dx, double dy) native 'Path_addPath';
   void _addPathWithMatrix(Path path, double dx, double dy, Float64List matrix) native 'Path_addPathWithMatrix';
-  
+
   /// Adds the given path to this path by extending the current segment of this
   /// path with the the first segment of the given path.
-  /// 
+  ///
   /// If `matrix4` is specified, the path will be transformed by this matrix
   /// after the matrix is translated by the given `offset`.  The matrix is a 4x4
   /// matrix stored in column major order.
@@ -1890,16 +2067,16 @@ class Path extends NativeFieldWrapperClass2 {
   Path _transform(Float64List matrix4) native 'Path_transform';
 
   /// Computes the bounding rectangle for this path.
-  /// 
+  ///
   /// A path containing only axis-aligned points on the same straight line will
   /// have no area, and therefore `Rect.isEmpty` will return true for such a
   /// path. Consider checking `rect.width + rect.height > 0.0` instead, or
   /// using the [computeMetrics] API to check the path length.
-  /// 
+  ///
   /// For many more elaborate paths, the bounds may be inaccurate.  For example,
   /// when a path contains a circle, the points used to compute the bounds are
   /// the circle's implied control points, which form a square around the circle;
-  /// if the circle has a transformation applied using [transform] then that 
+  /// if the circle has a transformation applied using [transform] then that
   /// square is rotated, and the (axis-aligned, non-rotated) bounding box
   /// therefore ends up grossly overestimating the actual area covered by the
   /// circle.
@@ -1910,9 +2087,9 @@ class Path extends NativeFieldWrapperClass2 {
   }
   Float32List _getBounds() native 'Path_getBounds';
 
-  /// Combines the two paths according to the manner specified by the given 
+  /// Combines the two paths according to the manner specified by the given
   /// `operation`.
-  /// 
+  ///
   /// The resulting path will be constructed from non-overlapping contours. The
   /// curve order is reduced where possible so that cubics may be turned into
   /// quadratics, and quadratics maybe turned into lines.
@@ -1922,13 +2099,13 @@ class Path extends NativeFieldWrapperClass2 {
     final Path path = new Path();
     if (path._op(path1, path2, operation.index)) {
       return path;
-    } 
+    }
     throw new StateError('Path.combine() failed.  This may be due an invalid path; in particular, check for NaN values.');
   }
   bool _op(Path path1, Path path2, int operation) native 'Path_op';
 
   /// Creates a [PathMetrics] object for this path.
-  /// 
+  ///
   /// If `forceClosed` is set to true, the contours of the path will be measured
   /// as if they had been closed, even if they were not explicitly closed.
   PathMetrics computeMetrics({bool forceClosed: false}) {
@@ -1937,19 +2114,19 @@ class Path extends NativeFieldWrapperClass2 {
 }
 
 /// The geometric description of a tangent: the angle at a point.
-/// 
+///
 /// See also:
 ///  * [PathMetric.getTangentForOffset], which returns the tangent of an offset along a path.
 class Tangent {
   /// Creates a [Tangent] with the given values.
-  /// 
+  ///
   /// The arguments must not be null.
-  const Tangent(this.position, this.vector) 
-    : assert(position != null), 
+  const Tangent(this.position, this.vector)
+    : assert(position != null),
       assert(vector != null);
 
   /// Creates a [Tangent] based on the angle rather than the vector.
-  /// 
+  ///
   /// The [vector] is computed to be the unit vector at the given angle, interpreted
   /// as clockwise radians from the x axis.
   factory Tangent.fromAngle(Offset position, double angle) {
@@ -1957,43 +2134,43 @@ class Tangent {
   }
 
   /// Position of the tangent.
-  /// 
+  ///
   /// When used with [PathMetric.getTangentForOffset], this represents the precise
   /// position that the given offset along the path corresponds to.
   final Offset position;
 
   /// The vector of the curve at [position].
-  /// 
+  ///
   /// When used with [PathMetric.getTangentForOffset], this is the vector of the
   /// curve that is at the given offset along the path (i.e. the direction of the
   /// curve at [position]).
   final Offset vector;
 
   /// The direction of the curve at [position].
-  /// 
+  ///
   /// When used with [PathMetric.getTangentForOffset], this is the angle of the
   /// curve that is the given offset along the path (i.e. the direction of the
   /// curve at [position]).
-  /// 
-  /// This value is in radians, with 0.0 meaning pointing along the x axis in 
+  ///
+  /// This value is in radians, with 0.0 meaning pointing along the x axis in
   /// the positive x-axis direction, positive numbers pointing downward toward
   /// the negative y-axis, i.e. in a clockwise direction, and negative numbers
-  /// pointing upward toward the positive y-axis, i.e. in a counter-clockwise 
+  /// pointing upward toward the positive y-axis, i.e. in a counter-clockwise
   /// direction.
   // flip the sign to be consistent with [Path.arcTo]'s `sweepAngle`
   double get angle => -math.atan2(vector.dy, vector.dx);
 }
 
 /// An iterable collection of [PathMetric] objects describing a [Path].
-/// 
+///
 /// A [PathMetrics] object is created by using the [Path.computeMetrics] method,
-/// and represents the path as it stood at the time of the call. Subsequent 
+/// and represents the path as it stood at the time of the call. Subsequent
 /// modifications of the path do not affect the [PathMetrics] object.
-/// 
+///
 /// Each path metric corresponds to a segment, or contour, of a path.
-/// 
-/// For example, a path consisting of a [Path.lineTo], a [Path.moveTo], and 
-/// another [Path.lineTo] will contain two contours and thus be represented by 
+///
+/// For example, a path consisting of a [Path.lineTo], a [Path.moveTo], and
+/// another [Path.lineTo] will contain two contours and thus be represented by
 /// two [PathMetric] objects.
 ///
 /// When iterating across a [PathMetrics]' contours, the [PathMetric] objects are only
@@ -2001,7 +2178,7 @@ class Tangent {
 class PathMetrics extends collection.IterableBase<PathMetric> {
   PathMetrics._(Path path, bool forceClosed) :
     _iterator = new PathMetricIterator._(new PathMetric._(path, forceClosed));
-    
+
   final Iterator<PathMetric> _iterator;
 
   @override
@@ -2021,25 +2198,25 @@ class PathMetricIterator implements Iterator<PathMetric> {
   @override
   bool moveNext() {
     // PathMetric isn't a normal iterable - it's already initialized to its
-    // first Path.  Should only call _moveNext when done with the first one. 
+    // first Path.  Should only call _moveNext when done with the first one.
     if (_firstTime == true) {
       _firstTime = false;
       return true;
     } else if (_pathMetric?._moveNext() == true) {
       return true;
-    } 
+    }
     _pathMetric = null;
     return false;
   }
 }
 
 /// Utilities for measuring a [Path] and extracting subpaths.
-/// 
-/// Iterate over the object returned by [Path.computeMetrics] to obtain 
+///
+/// Iterate over the object returned by [Path.computeMetrics] to obtain
 /// [PathMetric] objects.
 ///
 /// Once created, metrics will only be valid while the iterator is at the given
-/// contour. When the next contour's [PathMetric] is obtained, this object 
+/// contour. When the next contour's [PathMetric] is obtained, this object
 /// becomes invalid.
 class PathMetric extends NativeFieldWrapperClass2 {
   /// Create a new empty [Path] object.
@@ -2051,13 +2228,13 @@ class PathMetric extends NativeFieldWrapperClass2 {
 
   /// Computes the position of hte current contour at the given offset, and the
   /// angle of the path at that point.
-  /// 
-  /// For example, calling this method with a distance of 1.41 for a line from 
+  ///
+  /// For example, calling this method with a distance of 1.41 for a line from
   /// 0.0,0.0 to 2.0,2.0 would give a point 1.0,1.0 and the angle 45 degrees
   /// (but in radians).
-  /// 
+  ///
   /// Returns null if the contour has zero [length].
-  /// 
+  ///
   /// The distance is clamped to the [length] of the current contour.
   Tangent getTangentForOffset(double distance) {
     final Float32List posTan = _getPosTan(distance);
@@ -2066,24 +2243,24 @@ class PathMetric extends NativeFieldWrapperClass2 {
       return null;
     } else {
       return new Tangent(
-        new Offset(posTan[1], posTan[2]), 
-        new Offset(posTan[3], posTan[4]) 
+        new Offset(posTan[1], posTan[2]),
+        new Offset(posTan[3], posTan[4])
       );
     }
   }
   Float32List _getPosTan(double distance) native 'PathMeasure_getPosTan';
 
   /// Given a start and stop distance, return the intervening segment(s).
-  /// 
+  ///
   /// `start` and `end` are pinned to legal values (0..[length])
   /// Returns null if the segment is 0 length or `start` > `stop`.
   /// Begin the segment with a moveTo if `startWithMoveTo` is true.
   Path extractPath(double start, double end, {bool startWithMoveTo: true}) native 'PathMeasure_getSegment';
 
   /// Whether the contour is closed.
-  /// 
+  ///
   /// Returns true if the contour ends with a call to [Path.close] (which may
-  /// have been implied when using [Path.addRect]) or if `forceClosed` was 
+  /// have been implied when using [Path.addRect]) or if `forceClosed` was
   /// specified as true in the call to [Path.computeMetrics].  Returns false
   /// otherwise.
   bool get isClosed native 'PathMeasure_isClosed';
@@ -2092,10 +2269,10 @@ class PathMetric extends NativeFieldWrapperClass2 {
   //
   // A path can have a next contour if [Path.moveTo] was called after drawing began.
   // Return true if one exists, or false.
-  // 
+  //
   // This is not exactly congruent with a regular [Iterator.moveNext].
   // Typically, [Iterator.moveNext] should be called before accessing the
-  // [Iterator.current]. In this case, the [PathMetric] is valid before 
+  // [Iterator.current]. In this case, the [PathMetric] is valid before
   // calling `_moveNext` - `_moveNext` should be called after the first
   // iteration is done instead of before.
   bool _moveNext() native 'PathMeasure_nextContour';
@@ -2253,6 +2430,7 @@ class ImageFilter extends NativeFieldWrapperClass2 {
 class Shader extends NativeFieldWrapperClass2 {
   /// This class is created by the engine, and should not be instantiated
   /// or extended directly.
+  @pragma('vm:entry-point')
   Shader._();
 }
 
@@ -2408,10 +2586,10 @@ class Gradient extends Shader {
   /// If `matrix4` is provided, the gradient fill will be transformed by the
   /// specified 4x4 matrix relative to the local coordinate system. `matrix4` must
   /// be a column-major matrix packed into a list of 16 values.
-  /// 
-  /// If `focal` is provided and not equal to `center` and `focalRadius` is 
+  ///
+  /// If `focal` is provided and not equal to `center` and `focalRadius` is
   /// provided and not equal to 0.0, the generated shader will be a two point
-  /// conical radial gradient, with `focal` being the center of the focal 
+  /// conical radial gradient, with `focal` being the center of the focal
   /// circle and `focalRadius` being the radius of that circle. If `focal` is
   /// provided and not equal to `center`, at least one of the two offsets must
   /// not be equal to [Offset.zero].
@@ -2471,7 +2649,7 @@ class Gradient extends Shader {
   /// or if `colors` or `colorStops` contain null values, this constructor will
   /// throw a [NoSuchMethodError].
   ///
-  /// If `matrix4` is provided, the gradient fill will be transformed by the 
+  /// If `matrix4` is provided, the gradient fill will be transformed by the
   /// specified 4x4 matrix relative to the local coordinate system. `matrix4` must
   /// be a column-major matrix packed into a list of 16 values.
   Gradient.sweep(
@@ -2516,6 +2694,7 @@ class ImageShader extends Shader {
   /// direction and y direction respectively. The fourth argument gives the
   /// matrix to apply to the effect. All the arguments are required and must not
   /// be null.
+  @pragma('vm:entry-point')
   ImageShader(Image image, TileMode tmx, TileMode tmy, Float64List matrix4) :
     assert(image != null), // image is checked on the engine side
     assert(tmx != null),
@@ -2680,6 +2859,7 @@ class Canvas extends NativeFieldWrapperClass2 {
   ///
   /// To end the recording, call [PictureRecorder.endRecording] on the
   /// given recorder.
+  @pragma('vm:entry-point')
   Canvas(PictureRecorder recorder, [ Rect cullRect ]) : assert(recorder != null) {
     if (recorder.isRecording)
       throw new ArgumentError('"recorder" must not already be associated with another Canvas.');
@@ -2883,50 +3063,57 @@ class Canvas extends NativeFieldWrapperClass2 {
   /// Reduces the clip region to the intersection of the current clip and the
   /// given rectangle.
   ///
-  /// If the clip is not axis-aligned with the display device, and
-  /// [Paint.isAntiAlias] is true, then the clip will be anti-aliased. If
-  /// multiple draw commands intersect with the clip boundary, this can result
+  /// If [doAntiAlias] is true, then the clip will be anti-aliased.
+  ///
+  /// If multiple draw commands intersect with the clip boundary, this can result
   /// in incorrect blending at the clip boundary. See [saveLayer] for a
   /// discussion of how to address that.
   ///
   /// Use [ClipOp.difference] to subtract the provided rectangle from the
   /// current clip.
-  void clipRect(Rect rect, { ClipOp clipOp: ClipOp.intersect }) {
+  void clipRect(Rect rect, { ClipOp clipOp: ClipOp.intersect, bool doAntiAlias = true }) {
     assert(_rectIsValid(rect));
     assert(clipOp != null);
-    _clipRect(rect.left, rect.top, rect.right, rect.bottom, clipOp.index);
+    assert(doAntiAlias != null);
+    _clipRect(rect.left, rect.top, rect.right, rect.bottom, clipOp.index, doAntiAlias);
   }
   void _clipRect(double left,
                  double top,
                  double right,
                  double bottom,
-                 int clipOp) native 'Canvas_clipRect';
+                 int clipOp,
+                 bool doAntiAlias) native 'Canvas_clipRect';
 
   /// Reduces the clip region to the intersection of the current clip and the
   /// given rounded rectangle.
   ///
-  /// If [Paint.isAntiAlias] is true, then the clip will be anti-aliased. If
-  /// multiple draw commands intersect with the clip boundary, this can result
+  /// If [doAntiAlias] is true, then the clip will be anti-aliased.
+  ///
+  /// If multiple draw commands intersect with the clip boundary, this can result
   /// in incorrect blending at the clip boundary. See [saveLayer] for a
   /// discussion of how to address that and some examples of using [clipRRect].
-  void clipRRect(RRect rrect) {
+  void clipRRect(RRect rrect, {bool doAntiAlias = true}) {
     assert(_rrectIsValid(rrect));
-    _clipRRect(rrect._value);
+    assert(doAntiAlias != null);
+    _clipRRect(rrect._value, doAntiAlias);
   }
-  void _clipRRect(Float32List rrect) native 'Canvas_clipRRect';
+  void _clipRRect(Float32List rrect, bool doAntiAlias) native 'Canvas_clipRRect';
 
   /// Reduces the clip region to the intersection of the current clip and the
   /// given [Path].
   ///
-  /// If [Paint.isAntiAlias] is true, then the clip will be anti-aliased. If
+  /// If [doAntiAlias] is true, then the clip will be anti-aliased.
+  ///
+  /// If multiple draw commands intersect with the clip boundary, this can result
   /// multiple draw commands intersect with the clip boundary, this can result
   /// in incorrect blending at the clip boundary. See [saveLayer] for a
   /// discussion of how to address that.
-  void clipPath(Path path) {
+  void clipPath(Path path, {bool doAntiAlias = true}) {
     assert(path != null); // path is checked on the engine side
-    _clipPath(path);
+    assert(doAntiAlias != null);
+    _clipPath(path, doAntiAlias);
   }
-  void _clipPath(Path path) native 'Canvas_clipPath';
+  void _clipPath(Path path, bool doAntiAlias) native 'Canvas_clipPath';
 
   /// Paints the given [Color] onto the canvas, applying the given
   /// [BlendMode], with the given color being the source and the background
@@ -3390,6 +3577,7 @@ class Picture extends NativeFieldWrapperClass2 {
   /// or extended directly.
   ///
   /// To create a [Picture], use a [PictureRecorder].
+  @pragma('vm:entry-point')
   Picture._();
 
   /// Creates an image from this picture.
@@ -3404,6 +3592,12 @@ class Picture extends NativeFieldWrapperClass2 {
   /// Release the resources used by this object. The object is no longer usable
   /// after this method is called.
   void dispose() native 'Picture_dispose';
+
+  /// Returns the approximate number of bytes allocated for this object.
+  ///
+  /// The actual size of this picture may be larger, particularly if it contains
+  /// references to image or other large objects.
+  int get approximateBytesUsed native 'Picture_GetAllocationSize';
 }
 
 /// Records a [Picture] containing a sequence of graphical operations.
@@ -3414,6 +3608,7 @@ class PictureRecorder extends NativeFieldWrapperClass2 {
   /// Creates a new idle PictureRecorder. To associate it with a
   /// [Canvas] and begin recording, pass this [PictureRecorder] to the
   /// [Canvas] constructor.
+  @pragma('vm:entry-point')
   PictureRecorder() { _constructor(); }
   void _constructor() native 'PictureRecorder_constructor';
 
@@ -3479,4 +3674,3 @@ Future<T> _futurize<T>(_Callbacker<T> callbacker) {
     throw new Exception(error);
   return completer.future;
 }
-

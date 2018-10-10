@@ -21,9 +21,9 @@
 #include <utility>
 #include <vector>
 
+#include "flutter/fml/compiler_specific.h"
+#include "flutter/fml/macros.h"
 #include "font_collection.h"
-#include "lib/fxl/compiler_specific.h"
-#include "lib/fxl/macros.h"
 #include "minikin/LineBreaker.h"
 #include "paint_record.h"
 #include "paragraph_style.h"
@@ -55,6 +55,25 @@ class Paragraph {
 
   enum Affinity { UPSTREAM, DOWNSTREAM };
 
+  // TODO(garyq): Implement kIncludeLineSpacing and kExtendEndOfLine
+
+  // Options for various types of bounding boxes provided by
+  // GetRectsForRange(...).
+  // These options can be individually enabled, for example:
+  //
+  //   (RectStyle::kTight | RectStyle::kExtendEndOfLine)
+  //
+  // provides tight bounding boxes and extends the last box per line to the end
+  // of the layout area.
+  enum RectStyle {
+    kNone = 0x0,  // kNone cannot be combined with |.
+
+    // Provide tight bounding boxes that fit heights per span. Otherwise, the
+    // heights of spans are the max of the heights of the line the span belongs
+    // in.
+    kTight = 0x1
+  };
+
   struct PositionWithAffinity {
     const size_t position;
     const Affinity affinity;
@@ -73,11 +92,19 @@ class Paragraph {
   struct Range {
     Range() : start(), end() {}
     Range(T s, T e) : start(s), end(e) {}
+
     T start, end;
+
     bool operator==(const Range<T>& other) const {
       return start == other.start && end == other.end;
     }
+
     T width() { return end - start; }
+
+    void Shift(T delta) {
+      start += delta;
+      end += delta;
+    }
   };
 
   // Minikin Layout doLayout() and LineBreaker addStyleRun() has an
@@ -129,7 +156,9 @@ class Paragraph {
 
   // Returns a vector of bounding boxes that enclose all text between start and
   // end glyph indexes, including start and excluding end.
-  std::vector<TextBox> GetRectsForRange(size_t start, size_t end) const;
+  std::vector<TextBox> GetRectsForRange(size_t start,
+                                        size_t end,
+                                        RectStyle rect_style) const;
 
   // Returns the index of the glyph that corresponds to the provided coordinate,
   // with the top left corner as the origin, and +y direction as down.
@@ -176,6 +205,7 @@ class Paragraph {
   FRIEND_TEST(ParagraphTest, HyphenBreakParagraph);
   FRIEND_TEST(ParagraphTest, RepeatLayoutParagraph);
   FRIEND_TEST(ParagraphTest, Ellipsize);
+  FRIEND_TEST(ParagraphTest, UnderlineShiftParagraph);
 
   // Starting data to layout.
   std::vector<uint16_t> text_;
@@ -260,6 +290,8 @@ class Paragraph {
                 size_t line,
                 const SkPaint::FontMetrics& metrics,
                 TextDirection dir);
+
+    void Shift(double delta);
   };
 
   // Holds the laid out x positions of each glyph.
@@ -308,10 +340,14 @@ class Paragraph {
   double GetLineXOffset(double line_total_advance);
 
   // Creates and draws the decorations onto the canvas.
-  void PaintDecorations(SkCanvas* canvas, const PaintRecord& record);
+  void PaintDecorations(SkCanvas* canvas,
+                        const PaintRecord& record,
+                        SkPoint base_offset);
 
   // Draws the background onto the canvas.
-  void PaintBackground(SkCanvas* canvas, const PaintRecord& record);
+  void PaintBackground(SkCanvas* canvas,
+                       const PaintRecord& record,
+                       SkPoint base_offset);
 
   // Obtain a Minikin font collection matching this text style.
   std::shared_ptr<minikin::FontCollection> GetMinikinFontCollectionForStyle(
@@ -320,7 +356,7 @@ class Paragraph {
   // Get a default SkTypeface for a text style.
   sk_sp<SkTypeface> GetDefaultSkiaTypeface(const TextStyle& style);
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(Paragraph);
+  FML_DISALLOW_COPY_AND_ASSIGN(Paragraph);
 };
 
 }  // namespace txt

@@ -10,10 +10,11 @@
 #include <vector>
 
 #include "flutter/flow/compositor_context.h"
-#include "lib/fxl/build_config.h"
-#include "lib/fxl/logging.h"
-#include "lib/fxl/macros.h"
-#include "lib/ui/scenic/client/resources.h"
+#include "flutter/fml/build_config.h"
+#include "flutter/fml/compiler_specific.h"
+#include "flutter/fml/logging.h"
+#include "flutter/fml/macros.h"
+#include "lib/ui/scenic/cpp/resources.h"
 #include "third_party/skia/include/core/SkRect.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -40,7 +41,7 @@ class SceneUpdateContext {
     virtual void SignalWritesFinished(
         std::function<void(void)> on_writes_committed) = 0;
 
-    virtual scenic_lib::Image* GetImage() = 0;
+    virtual scenic::Image* GetImage() = 0;
 
     virtual sk_sp<SkSurface> GetSkiaSurface() const = 0;
   };
@@ -62,19 +63,19 @@ class SceneUpdateContext {
     ~Entity();
 
     SceneUpdateContext& context() { return context_; }
-    scenic_lib::EntityNode& entity_node() { return entity_node_; }
+    scenic::EntityNode& entity_node() { return entity_node_; }
 
    private:
     SceneUpdateContext& context_;
     Entity* const previous_entity_;
 
-    scenic_lib::EntityNode entity_node_;
+    scenic::EntityNode entity_node_;
   };
 
   class Clip : public Entity {
    public:
     Clip(SceneUpdateContext& context,
-         scenic_lib::Shape& shape,
+         scenic::Shape& shape,
          const SkRect& shape_bounds);
     ~Clip();
   };
@@ -111,12 +112,12 @@ class SceneUpdateContext {
     SkRect paint_bounds_;
   };
 
-  SceneUpdateContext(scenic_lib::Session* session,
+  SceneUpdateContext(scenic::Session* session,
                      SurfaceProducer* surface_producer);
 
   ~SceneUpdateContext();
 
-  scenic_lib::Session* session() { return session_; }
+  scenic::Session* session() { return session_; }
 
   bool has_metrics() const { return !!metrics_; }
   void set_metrics(fuchsia::ui::gfx::MetricsPtr metrics) {
@@ -142,7 +143,7 @@ class SceneUpdateContext {
   // CPU wait. Once Vulkan semaphores are available, this method must return
   // void and the implementation must submit surfaces on its own as soon as the
   // specific canvas operations are done.
-  FXL_WARN_UNUSED_RESULT
+  FML_WARN_UNUSED_RESULT
   std::vector<std::unique_ptr<SurfaceProducerSurface>> ExecutePaintTasks(
       CompositorContext::ScopedFrame& frame);
 
@@ -157,29 +158,29 @@ class SceneUpdateContext {
     std::vector<Layer*> layers;
   };
 
-  void CreateFrame(scenic_lib::EntityNode& entity_node,
+  void CreateFrame(scenic::EntityNode& entity_node,
                    const SkRRect& rrect,
                    SkColor color,
                    const SkRect& paint_bounds,
                    std::vector<Layer*> paint_layers);
-  void SetShapeTextureOrColor(scenic_lib::ShapeNode& shape_node,
+  void SetShapeTextureOrColor(scenic::ShapeNode& shape_node,
                               SkColor color,
                               SkScalar scale_x,
                               SkScalar scale_y,
                               const SkRect& paint_bounds,
                               std::vector<Layer*> paint_layers);
-  void SetShapeColor(scenic_lib::ShapeNode& shape_node, SkColor color);
-  scenic_lib::Image* GenerateImageIfNeeded(SkColor color,
-                                           SkScalar scale_x,
-                                           SkScalar scale_y,
-                                           const SkRect& paint_bounds,
-                                           std::vector<Layer*> paint_layers);
+  void SetShapeColor(scenic::ShapeNode& shape_node, SkColor color);
+  scenic::Image* GenerateImageIfNeeded(SkColor color,
+                                       SkScalar scale_x,
+                                       SkScalar scale_y,
+                                       const SkRect& paint_bounds,
+                                       std::vector<Layer*> paint_layers);
 
   Entity* top_entity_ = nullptr;
   float top_scale_x_ = 1.f;
   float top_scale_y_ = 1.f;
 
-  scenic_lib::Session* const session_;
+  scenic::Session* const session_;
   SurfaceProducer* const surface_producer_;
 
   fuchsia::ui::gfx::MetricsPtr metrics_;
@@ -189,7 +190,7 @@ class SceneUpdateContext {
   // Save ExportNodes so we can dispose them in our destructor.
   std::set<ExportNode*> export_nodes_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(SceneUpdateContext);
+  FML_DISALLOW_COPY_AND_ASSIGN(SceneUpdateContext);
 };
 
 }  // namespace flow

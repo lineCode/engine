@@ -33,22 +33,28 @@ const char* DartSnapshot::kIsolateInstructionsSymbol =
 #endif
 
 static const char* kVMDataSymbolSo = SYMBOL_PREFIX "kDartVmSnapshotData";
-static const char* kVMInstructionsSymbolSo = SYMBOL_PREFIX "kDartVmSnapshotInstructions";
-static const char* kIsolateDataSymbolSo = SYMBOL_PREFIX "kDartIsolateSnapshotData";
-static const char* kIsolateInstructionsSymbolSo = SYMBOL_PREFIX "kDartIsolateSnapshotInstructions";
+static const char* kVMInstructionsSymbolSo =
+    SYMBOL_PREFIX "kDartVmSnapshotInstructions";
+static const char* kIsolateDataSymbolSo =
+    SYMBOL_PREFIX "kDartIsolateSnapshotData";
+static const char* kIsolateInstructionsSymbolSo =
+    SYMBOL_PREFIX "kDartIsolateSnapshotInstructions";
 
 std::unique_ptr<DartSnapshotBuffer> ResolveVMData(const Settings& settings) {
   if (settings.vm_snapshot_data_path.size() > 0) {
     if (auto source = DartSnapshotBuffer::CreateWithContentsOfFile(
-            settings.vm_snapshot_data_path.c_str(), false /* executable */)) {
+            fml::OpenFile(settings.vm_snapshot_data_path.c_str(), false,
+                          fml::FilePermission::kRead),
+            {fml::FileMapping::Protection::kRead})) {
       return source;
     }
   }
 
   if (settings.application_library_path.size() > 0) {
-    auto shared_library = fml::NativeLibrary::Create(settings.application_library_path.c_str());
+    auto shared_library =
+        fml::NativeLibrary::Create(settings.application_library_path.c_str());
     if (auto source = DartSnapshotBuffer::CreateWithSymbolInLibrary(
-        shared_library, kVMDataSymbolSo)) {
+            shared_library, kVMDataSymbolSo)) {
       return source;
     }
   }
@@ -62,7 +68,9 @@ std::unique_ptr<DartSnapshotBuffer> ResolveVMInstructions(
     const Settings& settings) {
   if (settings.vm_snapshot_instr_path.size() > 0) {
     if (auto source = DartSnapshotBuffer::CreateWithContentsOfFile(
-            settings.vm_snapshot_instr_path.c_str(), true /* executable */)) {
+            fml::OpenFile(settings.vm_snapshot_instr_path.c_str(), false,
+                          fml::FilePermission::kRead),
+            {fml::FileMapping::Protection::kExecute})) {
       return source;
     }
   }
@@ -85,8 +93,9 @@ std::unique_ptr<DartSnapshotBuffer> ResolveIsolateData(
     const Settings& settings) {
   if (settings.isolate_snapshot_data_path.size() > 0) {
     if (auto source = DartSnapshotBuffer::CreateWithContentsOfFile(
-            settings.isolate_snapshot_data_path.c_str(),
-            false /* executable */)) {
+            fml::OpenFile(settings.isolate_snapshot_data_path.c_str(), false,
+                          fml::FilePermission::kRead),
+            {fml::FileMapping::Protection::kRead})) {
       return source;
     }
   }
@@ -109,8 +118,9 @@ std::unique_ptr<DartSnapshotBuffer> ResolveIsolateInstructions(
     const Settings& settings) {
   if (settings.isolate_snapshot_instr_path.size() > 0) {
     if (auto source = DartSnapshotBuffer::CreateWithContentsOfFile(
-            settings.isolate_snapshot_instr_path.c_str(),
-            true /* executable */)) {
+            fml::OpenFile(settings.isolate_snapshot_instr_path.c_str(), false,
+                          fml::FilePermission::kRead),
+            {fml::FileMapping::Protection::kExecute})) {
       return source;
     }
   }
@@ -129,17 +139,17 @@ std::unique_ptr<DartSnapshotBuffer> ResolveIsolateInstructions(
       loaded_process, DartSnapshot::kIsolateInstructionsSymbol);
 }
 
-fxl::RefPtr<DartSnapshot> DartSnapshot::VMSnapshotFromSettings(
+fml::RefPtr<DartSnapshot> DartSnapshot::VMSnapshotFromSettings(
     const Settings& settings) {
   TRACE_EVENT0("flutter", "DartSnapshot::VMSnapshotFromSettings");
 #if OS_WIN
-  return fxl::MakeRefCounted<DartSnapshot>(
+  return fml::MakeRefCounted<DartSnapshot>(
       DartSnapshotBuffer::CreateWithUnmanagedAllocation(kDartVmSnapshotData),
       DartSnapshotBuffer::CreateWithUnmanagedAllocation(
           kDartVmSnapshotInstructions));
 #else   // OS_WIN
   auto snapshot =
-      fxl::MakeRefCounted<DartSnapshot>(ResolveVMData(settings),         //
+      fml::MakeRefCounted<DartSnapshot>(ResolveVMData(settings),         //
                                         ResolveVMInstructions(settings)  //
       );
   if (snapshot->IsValid()) {
@@ -149,18 +159,18 @@ fxl::RefPtr<DartSnapshot> DartSnapshot::VMSnapshotFromSettings(
 #endif  // OS_WIN
 }
 
-fxl::RefPtr<DartSnapshot> DartSnapshot::IsolateSnapshotFromSettings(
+fml::RefPtr<DartSnapshot> DartSnapshot::IsolateSnapshotFromSettings(
     const Settings& settings) {
   TRACE_EVENT0("flutter", "DartSnapshot::IsolateSnapshotFromSettings");
 #if OS_WIN
-  return fxl::MakeRefCounted<DartSnapshot>(
+  return fml::MakeRefCounted<DartSnapshot>(
       DartSnapshotBuffer::CreateWithUnmanagedAllocation(
           kDartIsolateSnapshotData),
       DartSnapshotBuffer::CreateWithUnmanagedAllocation(
           kDartIsolateSnapshotInstructions));
 #else  // OS_WIN
   auto snapshot =
-      fxl::MakeRefCounted<DartSnapshot>(ResolveIsolateData(settings),         //
+      fml::MakeRefCounted<DartSnapshot>(ResolveIsolateData(settings),         //
                                         ResolveIsolateInstructions(settings)  //
       );
   if (snapshot->IsValid()) {
@@ -170,8 +180,8 @@ fxl::RefPtr<DartSnapshot> DartSnapshot::IsolateSnapshotFromSettings(
 #endif
 }
 
-fxl::RefPtr<DartSnapshot> DartSnapshot::Empty() {
-  return fxl::MakeRefCounted<DartSnapshot>(nullptr, nullptr);
+fml::RefPtr<DartSnapshot> DartSnapshot::Empty() {
+  return fml::MakeRefCounted<DartSnapshot>(nullptr, nullptr);
 }
 
 DartSnapshot::DartSnapshot(std::unique_ptr<DartSnapshotBuffer> data,

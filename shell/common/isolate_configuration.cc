@@ -16,76 +16,46 @@ IsolateConfiguration::IsolateConfiguration() = default;
 
 IsolateConfiguration::~IsolateConfiguration() = default;
 
-bool IsolateConfiguration::PrepareIsolate(
-    fml::WeakPtr<blink::DartIsolate> isolate) {
-  if (!isolate) {
-    return false;
-  }
-
-  if (isolate->GetPhase() != blink::DartIsolate::Phase::LibrariesSetup) {
-    FXL_DLOG(ERROR)
+bool IsolateConfiguration::PrepareIsolate(blink::DartIsolate& isolate) {
+  if (isolate.GetPhase() != blink::DartIsolate::Phase::LibrariesSetup) {
+    FML_DLOG(ERROR)
         << "Isolate was in incorrect phase to be prepared for running.";
     return false;
   }
 
-  return DoPrepareIsolate(*isolate);
+  return DoPrepareIsolate(isolate);
 }
 
-class PrecompiledIsolateConfiguration final : public IsolateConfiguration {
+class AppSnapshotIsolateConfiguration final : public IsolateConfiguration {
  public:
-  PrecompiledIsolateConfiguration() = default;
+  AppSnapshotIsolateConfiguration() = default;
 
   // |shell::IsolateConfiguration|
   bool DoPrepareIsolate(blink::DartIsolate& isolate) override {
-    if (!blink::DartVM::IsRunningPrecompiledCode()) {
-      return false;
-    }
     return isolate.PrepareForRunningFromPrecompiledCode();
   }
 
  private:
-  FXL_DISALLOW_COPY_AND_ASSIGN(PrecompiledIsolateConfiguration);
+  FML_DISALLOW_COPY_AND_ASSIGN(AppSnapshotIsolateConfiguration);
 };
 
-class SnapshotIsolateConfiguration : public IsolateConfiguration {
+class KernelIsolateConfiguration : public IsolateConfiguration {
  public:
-  SnapshotIsolateConfiguration(std::unique_ptr<fml::Mapping> snapshot)
-      : snapshot_(std::move(snapshot)) {}
+  KernelIsolateConfiguration(std::unique_ptr<fml::Mapping> kernel)
+      : kernel_(std::move(kernel)) {}
 
   // |shell::IsolateConfiguration|
   bool DoPrepareIsolate(blink::DartIsolate& isolate) override {
     if (blink::DartVM::IsRunningPrecompiledCode()) {
       return false;
     }
-    return isolate.PrepareForRunningFromSnapshot(std::move(snapshot_));
+    return isolate.PrepareForRunningFromKernel(std::move(kernel_));
   }
 
  private:
-  std::unique_ptr<fml::Mapping> snapshot_;
+  std::unique_ptr<fml::Mapping> kernel_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(SnapshotIsolateConfiguration);
-};
-
-class SourceIsolateConfiguration final : public IsolateConfiguration {
- public:
-  SourceIsolateConfiguration(std::string main_path, std::string packages_path)
-      : main_path_(std::move(main_path)),
-        packages_path_(std::move(packages_path)) {}
-
-  // |shell::IsolateConfiguration|
-  bool DoPrepareIsolate(blink::DartIsolate& isolate) override {
-    if (blink::DartVM::IsRunningPrecompiledCode()) {
-      return false;
-    }
-    return isolate.PrepareForRunningFromSource(std::move(main_path_),
-                                               std::move(packages_path_));
-  }
-
- private:
-  std::string main_path_;
-  std::string packages_path_;
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(SourceIsolateConfiguration);
+  FML_DISALLOW_COPY_AND_ASSIGN(KernelIsolateConfiguration);
 };
 
 class KernelListIsolateConfiguration final : public IsolateConfiguration {
@@ -102,8 +72,8 @@ class KernelListIsolateConfiguration final : public IsolateConfiguration {
 
     for (size_t i = 0; i < kernel_pieces_.size(); i++) {
       bool last_piece = i + 1 == kernel_pieces_.size();
-      if (!isolate.PrepareForRunningFromSnapshot(std::move(kernel_pieces_[i]),
-                                                 last_piece)) {
+      if (!isolate.PrepareForRunningFromKernel(std::move(kernel_pieces_[i]),
+                                               last_piece)) {
         return false;
       }
     }
@@ -114,7 +84,7 @@ class KernelListIsolateConfiguration final : public IsolateConfiguration {
  private:
   std::vector<std::unique_ptr<fml::Mapping>> kernel_pieces_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(KernelListIsolateConfiguration);
+  FML_DISALLOW_COPY_AND_ASSIGN(KernelListIsolateConfiguration);
 };
 
 std::unique_ptr<IsolateConfiguration> IsolateConfiguration::InferFromSettings(
@@ -122,73 +92,51 @@ std::unique_ptr<IsolateConfiguration> IsolateConfiguration::InferFromSettings(
     fml::RefPtr<blink::AssetManager> asset_manager) {
   // Running in AOT mode.
   if (blink::DartVM::IsRunningPrecompiledCode()) {
-    return CreateForPrecompiledCode();
-  }
-
-  // Run from sources.
-  {
-    const auto& main = settings.main_dart_file_path;
-    const auto& packages = settings.packages_file_path;
-    if (main.size() != 0 && packages.size() != 0) {
-      return CreateForSource(std::move(main), std::move(packages));
-    }
+    return CreateForAppSnapshot();
   }
 
   // Running from kernel snapshot.
-  {
-    // TODO(engine): Add AssetManager::GetAsMapping or such to avoid the copy.
-    std::vector<uint8_t> kernel;
-    if (asset_manager && asset_manager->GetAsBuffer(
-                             settings.application_kernel_asset, &kernel)) {
-      return CreateForSnapshot(
-          std::make_unique<fml::DataMapping>(std::move(kernel)));
-    }
-  }
-
-  // Running from script snapshot.
-  {
-    // TODO(engine): Add AssetManager::GetAsMapping or such to avoid the copy.
-    std::vector<uint8_t> script_snapshot;
-    if (asset_manager && asset_manager->GetAsBuffer(
-                             settings.script_snapshot_path, &script_snapshot)) {
-      return CreateForSnapshot(
-          std::make_unique<fml::DataMapping>(std::move(script_snapshot)));
+  if (asset_manager) {
+    std::unique_ptr<fml::Mapping> kernel =
+        asset_manager->GetAsMapping(settings.application_kernel_asset);
+    if (kernel) {
+      return CreateForKernel(std::move(kernel));
     }
   }
 
   // Running from kernel divided into several pieces (for sharing).
-  {
-    // TODO(fuchsia): Add AssetManager::GetAsMapping or such to avoid the copy.
-    // TODO(fuchsia): Use async blobfs API once it becomes available.
-    std::vector<uint8_t> kernel_list;
-    if (asset_manager &&
-        asset_manager->GetAsBuffer(settings.application_kernel_list_asset,
-                                   &kernel_list)) {
+  // TODO(fuchsia): Use async blobfs API once it becomes available.
+  if (asset_manager) {
+    std::unique_ptr<fml::Mapping> kernel_list =
+        asset_manager->GetAsMapping(settings.application_kernel_list_asset);
+    if (kernel_list) {
+      const char* kernel_list_str =
+          reinterpret_cast<const char*>(kernel_list->GetMapping());
+      size_t kernel_list_size = kernel_list->GetSize();
+
       std::vector<std::unique_ptr<fml::Mapping>> kernel_pieces;
 
       size_t piece_path_start = 0;
-      while (piece_path_start < kernel_list.size()) {
+      while (piece_path_start < kernel_list_size) {
         size_t piece_path_end = piece_path_start;
-        while ((piece_path_end < kernel_list.size()) &&
-               (kernel_list[piece_path_end] != '\n')) {
+        while ((piece_path_end < kernel_list_size) &&
+               (kernel_list_str[piece_path_end] != '\n')) {
           piece_path_end++;
         }
 
-        std::string piece_path(
-            reinterpret_cast<const char*>(&kernel_list[piece_path_start]),
-            piece_path_end - piece_path_start);
-        std::vector<uint8_t> piece;
-        if (!asset_manager->GetAsBuffer(piece_path, &piece)) {
-          FXL_LOG(ERROR) << "Failed to load: " << piece_path;
+        std::string piece_path(&kernel_list_str[piece_path_start],
+                               piece_path_end - piece_path_start);
+        std::unique_ptr<fml::Mapping> piece =
+            asset_manager->GetAsMapping(piece_path);
+        if (piece == nullptr) {
+          FML_LOG(ERROR) << "Failed to load: " << piece_path;
           return nullptr;
         }
 
-        kernel_pieces.emplace_back(
-            std::make_unique<fml::DataMapping>(std::move(piece)));
+        kernel_pieces.emplace_back(std::move(piece));
 
         piece_path_start = piece_path_end + 1;
       }
-
       return CreateForKernelList(std::move(kernel_pieces));
     }
   }
@@ -197,20 +145,13 @@ std::unique_ptr<IsolateConfiguration> IsolateConfiguration::InferFromSettings(
 }
 
 std::unique_ptr<IsolateConfiguration>
-IsolateConfiguration::CreateForPrecompiledCode() {
-  return std::make_unique<PrecompiledIsolateConfiguration>();
+IsolateConfiguration::CreateForAppSnapshot() {
+  return std::make_unique<AppSnapshotIsolateConfiguration>();
 }
 
-std::unique_ptr<IsolateConfiguration> IsolateConfiguration::CreateForSnapshot(
-    std::unique_ptr<fml::Mapping> snapshot) {
-  return std::make_unique<SnapshotIsolateConfiguration>(std::move(snapshot));
-}
-
-std::unique_ptr<IsolateConfiguration> IsolateConfiguration::CreateForSource(
-    std::string main_path,
-    std::string packages_path) {
-  return std::make_unique<SourceIsolateConfiguration>(std::move(main_path),
-                                                      std::move(packages_path));
+std::unique_ptr<IsolateConfiguration> IsolateConfiguration::CreateForKernel(
+    std::unique_ptr<fml::Mapping> kernel) {
+  return std::make_unique<KernelIsolateConfiguration>(std::move(kernel));
 }
 
 std::unique_ptr<IsolateConfiguration> IsolateConfiguration::CreateForKernelList(

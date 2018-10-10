@@ -23,6 +23,11 @@
 }
 
 - (BOOL)application:(UIApplication*)application
+    willFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
+  return [_lifeCycleDelegate application:application willFinishLaunchingWithOptions:launchOptions];
+}
+
+- (BOOL)application:(UIApplication*)application
     didFinishLaunchingWithOptions:(NSDictionary*)launchOptions {
   return [_lifeCycleDelegate application:application didFinishLaunchingWithOptions:launchOptions];
 }
@@ -125,6 +130,21 @@
 - (void)application:(UIApplication*)application
     performFetchWithCompletionHandler:(void (^)(UIBackgroundFetchResult result))completionHandler {
   [_lifeCycleDelegate application:application performFetchWithCompletionHandler:completionHandler];
+}
+
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 120000
+- (BOOL)application:(UIApplication*)application
+    continueUserActivity:(NSUserActivity*)userActivity
+      restorationHandler:(void (^)(NSArray<id<UIUserActivityRestoring>>* __nullable
+                                       restorableObjects))restorationHandler {
+#else
+- (BOOL)application:(UIApplication*)application
+    continueUserActivity:(NSUserActivity*)userActivity
+      restorationHandler:(void (^)(NSArray* __nullable restorableObjects))restorationHandler {
+#endif
+  return [_lifeCycleDelegate application:application
+                    continueUserActivity:userActivity
+                      restorationHandler:restorationHandler];
 }
 
 #pragma mark - FlutterPluginRegistry methods. All delegating to the rootViewController

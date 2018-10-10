@@ -20,8 +20,8 @@ RunConfiguration RunConfiguration::InferFromSettings(
       fml::Duplicate(settings.assets_dir)));
 
   asset_manager->PushBack(
-      std::make_unique<blink::DirectoryAssetBundle>(fml::OpenFile(
-          settings.assets_path.c_str(), fml::OpenPermission::kRead, true)));
+      std::make_unique<blink::DirectoryAssetBundle>(fml::OpenDirectory(
+          settings.assets_path.c_str(), false, fml::FilePermission::kRead)));
 
   return {IsolateConfiguration::InferFromSettings(settings, asset_manager),
           asset_manager};
@@ -60,12 +60,22 @@ void RunConfiguration::SetEntrypoint(std::string entrypoint) {
   entrypoint_ = std::move(entrypoint);
 }
 
+void RunConfiguration::SetEntrypointAndLibrary(std::string entrypoint,
+                                               std::string library) {
+  SetEntrypoint(entrypoint);
+  entrypoint_library_ = std::move(library);
+}
+
 fml::RefPtr<blink::AssetManager> RunConfiguration::GetAssetManager() const {
   return asset_manager_;
 }
 
 const std::string& RunConfiguration::GetEntrypoint() const {
   return entrypoint_;
+}
+
+const std::string& RunConfiguration::GetEntrypointLibrary() const {
+  return entrypoint_library_;
 }
 
 std::unique_ptr<IsolateConfiguration>

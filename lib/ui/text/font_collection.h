@@ -9,30 +9,28 @@
 #include <vector>
 
 #include "flutter/assets/asset_manager.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/ref_ptr.h"
+#include "flutter/fml/macros.h"
+#include "flutter/fml/memory/ref_ptr.h"
 #include "txt/font_collection.h"
 
 namespace blink {
 
 class FontCollection {
  public:
-  static FontCollection& ForProcess();
+  FontCollection();
+
+  ~FontCollection();
 
   std::shared_ptr<txt::FontCollection> GetFontCollection() const;
 
-  void RegisterFonts(const AssetManager& asset_manager);
+  void RegisterFonts(fml::RefPtr<AssetManager> asset_manager);
 
   void RegisterTestFonts();
 
  private:
   std::shared_ptr<txt::FontCollection> collection_;
 
-  FontCollection();
-
-  ~FontCollection();
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(FontCollection);
+  FML_DISALLOW_COPY_AND_ASSIGN(FontCollection);
 };
 
 }  // namespace blink

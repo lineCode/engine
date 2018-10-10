@@ -15,8 +15,8 @@ PlatformMessageRouter::PlatformMessageRouter() = default;
 PlatformMessageRouter::~PlatformMessageRouter() = default;
 
 void PlatformMessageRouter::HandlePlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) const {
-  fxl::RefPtr<blink::PlatformMessageResponse> completer = message->response();
+    fml::RefPtr<blink::PlatformMessage> message) const {
+  fml::RefPtr<blink::PlatformMessageResponse> completer = message->response();
   auto it = message_handlers_.find(message->channel());
   if (it != message_handlers_.end()) {
     FlutterBinaryMessageHandler handler = it->second;
@@ -27,7 +27,7 @@ void PlatformMessageRouter::HandlePlatformMessage(
     handler(data, ^(NSData* reply) {
       if (completer) {
         if (reply) {
-          completer->Complete(GetVectorFromNSData(reply));
+          completer->Complete(GetMappingFromNSData(reply));
         } else {
           completer->CompleteEmpty();
         }
